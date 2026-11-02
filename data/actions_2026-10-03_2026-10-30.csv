@@ -1,0 +1,56 @@
+start_jst,end_jst,kind,target,amount,method,note,certainty
+2026-10-03T03:40:00+09:00,2026-10-03T06:00:00+09:00,humidifier_on,hum_a,,,,recorded
+2026-10-03T04:30:00+09:00,,watering,all_pots,,手撒き,,recorded
+2026-10-04T01:40:00+09:00,2026-10-04T06:20:00+09:00,humidifier_on,hum_a,,,,recorded
+2026-10-04T03:00:00+09:00,,watering,all_pots,,手撒き,,recorded
+2026-10-05T00:00:00+09:00,2026-10-05T23:59:59+09:00,other,hum_a,,,加湿器の記録なし・湿度に入れた形の段差なし（入れていないと読んだ）,inferred_from_data
+2026-10-06T04:30:00+09:00,2026-10-06T06:00:00+09:00,humidifier_on,hum_a,,,,recorded
+2026-10-06T05:00:00+09:00,,watering,all_pots,,手撒き,,recorded
+2026-10-07T00:30:00+09:00,2026-10-07T05:40:00+09:00,humidifier_on,hum_a,,,,recorded
+2026-10-07T04:00:00+09:00,,watering,all_pots,,手撒き,,recorded
+2026-10-08T03:50:00+09:00,2026-10-08T06:30:00+09:00,humidifier_on,hum_a,,,,recorded
+2026-10-08T05:00:00+09:00,,watering,all_pots,,手撒き,,recorded
+2026-10-09T00:00:00+09:00,2026-10-09T23:59:59+09:00,other,all_pots,,,日報なし＝水やりの有無は不明,estimated
+2026-10-09T15:40:00+09:00,2026-10-09T16:40:00+09:00,humidifier_on,hum_a,,,日報なし。湿度が加湿器を入れた時と同じ形で上がり下がりした（前日の欄に書かれた「15:40 入・16:40 切」と同じ時刻）,inferred_from_data
+2026-10-10T04:40:00+09:00,2026-10-10T05:30:00+09:00,humidifier_on,hum_a,,,,recorded
+2026-10-10T05:00:00+09:00,,watering,all_pots,,手撒き,,recorded
+2026-10-10T14:00:00+09:00,2026-10-10T17:05:00+09:00,humidifier_on,hum_a,,,入は記録どおり・切の記録なし＝湿度が下がった所から推定,inferred_from_data
+2026-10-11T01:50:00+09:00,2026-10-11T05:40:00+09:00,humidifier_on,hum_a,,,,recorded
+2026-10-11T13:30:00+09:00,2026-10-11T17:15:00+09:00,humidifier_on,hum_a,,,途中で水が切れた（15:30 ごろ湿度が戻った）,recorded
+2026-10-12T00:50:00+09:00,2026-10-12T04:00:00+09:00,humidifier_on,hum_a,,,,recorded
+2026-10-12T03:00:00+09:00,,watering,all_pots,,手撒き,,recorded
+2026-10-12T16:00:00+09:00,2026-10-12T17:00:00+09:00,humidifier_on,hum_a,,,,recorded
+2026-10-13T01:20:00+09:00,2026-10-13T03:00:00+09:00,humidifier_on,hum_a,,,,recorded
+2026-10-13T02:00:00+09:00,,watering,表面が乾いた鉢だけ,,手撒き,休みの日だが表面が乾いた鉢にだけ水をやった,recorded
+2026-10-13T14:00:00+09:00,2026-10-13T16:55:00+09:00,humidifier_on,hum_a,,,入は記録どおり・切の記録なし＝湿度が下がった所から推定,inferred_from_data
+2026-10-14T00:00:00+09:00,2026-10-14T23:59:59+09:00,other,all_pots,,,新しい培土が一部届き、鉢を大きくする作業を始めた（どの株からかは記録なし・時刻なし）,estimated
+2026-10-14T02:10:00+09:00,2026-10-14T04:00:00+09:00,humidifier_on,hum_a,,,,recorded
+2026-10-14T03:00:00+09:00,,watering,all_pots,,手撒き,,recorded
+2026-10-15T03:00:00+09:00,2026-10-15T04:30:00+09:00,humidifier_on,hum_a,,,,recorded
+2026-10-15T04:00:00+09:00,,watering,all_pots,,手撒き,,recorded
+2026-10-15T14:20:00+09:00,2026-10-15T17:00:00+09:00,humidifier_on,hum_a,,,入は記録どおり・切の記録なし＝湿度が下がった所から推定,inferred_from_data
+2026-10-16T03:00:00+09:00,2026-10-16T05:40:00+09:00,humidifier_on,hum_a,,,,recorded
+2026-10-16T04:00:00+09:00,,watering,all_pots,,手撒き,,recorded
+2026-10-16T14:20:00+09:00,2026-10-16T15:40:00+09:00,humidifier_on,hum_a,,,,recorded
+2026-10-16T17:40:00+09:00,2026-10-23T17:12:00+09:00,other,group_c,,,group_c の定点 3 株を大きい鉢へ移した（移した日は記録なし・この間のどこか）,estimated
+2026-10-17T03:10:00+09:00,2026-10-17T05:40:00+09:00,humidifier_on,hum_a,,,,recorded
+2026-10-17T04:00:00+09:00,,watering,all_pots,,手撒き,,recorded
+2026-10-17T14:15:00+09:00,2026-10-17T16:15:00+09:00,humidifier_on,hum_a,,,入は記録どおり・切の記録なし＝湿度が下がった所から推定（水切れの可能性）,inferred_from_data
+2026-10-18T03:10:00+09:00,2026-10-18T05:50:00+09:00,humidifier_on,hum_a,,,,recorded
+2026-10-18T13:30:00+09:00,2026-10-18T17:00:00+09:00,humidifier_on,hum_a,,,,recorded
+2026-10-19T03:00:00+09:00,2026-10-19T06:00:00+09:00,humidifier_on,hum_a,,,,recorded
+2026-10-19T04:00:00+09:00,,watering,all_pots,,手撒き,,recorded
+2026-10-20T05:00:00+09:00,,watering,all_pots,,手撒き,,recorded
+2026-10-20T05:24:00+09:00,2026-10-20T05:26:00+09:00,other,room,,,コンセントのブレーカーが落ち、1 分以内に戻した（記録が 1 本欠けた）,recorded
+2026-10-22T04:00:00+09:00,,watering,all_pots,,手撒き,,recorded
+2026-10-22T15:30:00+09:00,2026-10-22T18:00:00+09:00,humidifier_on,hum_a,,,入れて 30 分で湿度がほとんど上がらなかった（理由は記録なし）,recorded
+2026-10-23T03:00:00+09:00,2026-10-23T06:30:00+09:00,humidifier_on,hum_a,,,,recorded
+2026-10-23T03:00:00+09:00,,watering,all_pots,,手撒き,,recorded
+2026-10-24T00:00:00+09:00,2026-10-30T23:59:59+09:00,other,hum_a,,,この週は加湿器の記録なし・湿度に入れた形の段差なし（入れていないと読んだ）,inferred_from_data
+2026-10-25T03:00:00+09:00,,watering,all_pots,,手撒き,,recorded
+2026-10-26T03:30:00+09:00,,watering,all_pots,,手撒き,,recorded
+2026-10-27T00:00:00+09:00,2026-10-27T23:59:59+09:00,other,group_a・group_b,,,group_a・group_b を大きい鉢へ移した（時刻なし・pot_a を含むかは記録なし）,estimated
+2026-10-28T00:08:00+09:00,2026-10-28T00:31:00+09:00,other,pot_a,,,土の水分計が鉢から抜け、差し直した（以後は数値の水準が上がった）,recorded
+2026-10-28T00:08:00+09:00,,watering,鉢を大きくした株だけ,,手撒き,休みの日・鉢を大きくした株だけ。この時に土の水分計が鉢から抜けた（時刻は計器の乱れから）,inferred_from_data
+2026-10-29T03:00:00+09:00,,watering,all_pots,,手撒き,,recorded
+2026-10-30T00:00:00+09:00,2026-10-30T23:59:59+09:00,watering,鉢を大きくした株だけ,,手撒き,休みの日・鉢を大きくした株だけ・時刻の記録なし（日の幅で置いた）,estimated

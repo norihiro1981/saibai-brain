@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Read(**/private/**)",
+      "Bash(*.env*)",
+      "Bash(*--no-verify*)",
+      "Bash(git commit -n*)",
+      "Bash(git commit * -n*)",
+      "Bash(*hooksPath*)",
+      "Bash(*.git/hooks*)",
+      "Bash(*.config/saibai*)",
+      "Bash(*gitleaks.toml*)",
+      "Bash(*gitleaksignore*)",
+      "Edit(**/.git/**)",
+      "Write(**/.git/**)",
+      "Edit(~/.config/saibai/**)",
+      "Write(~/.config/saibai/**)",
+      "Edit(**/.gitleaks.toml)",
+      "Write(**/.gitleaks.toml)",
+      "Edit(**/.gitleaksignore)",
+      "Write(**/.gitleaksignore)"
+    ]
+  }
+}

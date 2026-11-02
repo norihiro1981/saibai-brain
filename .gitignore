@@ -1,0 +1,18 @@
+# 鍵（.env.example だけ残す）
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# 手元だけの物（正解の表・叩いた時の生の記録）
+private/
+spikes/logs/
+
+# macOS
+.DS_Store
