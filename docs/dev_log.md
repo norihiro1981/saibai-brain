@@ -35,3 +35,11 @@
 
 ## 2026-11-04（水）
 - 段 0（骨組み）：`uv` で Python 3.12 のプロジェクトにした（`pyproject.toml`・`src/saibai/`・`tests/`）。依存＝anthropic・httpx・mcp・pandas・python-dotenv、開発用＝pytest・ruff、Bluetooth の bleak は予備の組（`ble`）。spikes は残し、ruff からは外した。設計書 §8 の 11/3 の箇条の「Bluetooth が主の道」を v0.5 に合わせて直した。
+- 段 2（Managed Agents を叩く・`spikes/managed_agents/ma_probe.py`）：書く前に Claude Code の claude-api の手引きの Managed Agents の節（overview・core・tools・events・multiagent・memory・scheduled-deployments と Python の README）を読んだ。SDK は anthropic 2.4.0（`client.beta.{agents,environments,sessions,memory_stores,deployments,deployment_runs}` が全部あった）。ID は `spikes/logs/ma_ids.json`（commit しない）に貯めて使い回す。各セッションに費用の上限 $1。全部 1 回目で通った。
+  - ① エージェント＋環境（cloud・networking limited）＋セッション：できた。分析役（Sonnet 5.5）に夏の記録 30 分を渡し、数値と時刻つきの 3 行の要約が返った。$0.03・出力 1,037 トークン・9 秒。
+  - ② custom tool の往復（`submit_plan`）：できた。手元が 1 回目を「断った・理由」で返すと、制御役（Opus 5.5）は理由を読んで計画を出し直し、2 回目を受け付けると締めの一言を書いた（計画は 2 回）。$0.15。頼んでいないのに、計画の前に専門家に湿度を聞きに行った（その時は記憶の置き場を付けていなかったので「知識に無い」と答え、制御役は短い運転にとどめた＝置き場が無い時に作り話をしなかった）。
+  - ③ 名簿（`multiagent_20261001`・専門家 1 体・`inline_agents` と workflows は切）：できた。流れには `agent.thread_message_sent/received` で問いと答えが出る。
+  - ④ 記憶の置き場：できた。知識（`knowledge_seed.md`・read_only）を専門家が `/mnt/memory/saibai-knowledge/` から読み、§番号と元の資料つきで答えた。栽培ノート（read_write）に制御役が 1 行足し、版が `created（api_actor）→ modified（session_actor・セッション ID つき）` と残った。読むだけの置き場に書こうとした時に断られるかは**まだ試していない**。②＋③④ で $0.11。
+  - ⑤ 定時の起動（deployments）：できた。cron `0 6 * * *`・Asia/Tokyo で次が 21:00 UTC（＝6:00 JST）と出た。`pause`→`unpause`→`pause` が API で効いた（Artifact の「定時の起動の入切」はこれで作れる）。費用の上限（$0.50）を付けて作れ、起きたセッションに上限が写っていた。止めたまま手で起こす（`deployments.run`）と、返りに `session_id` が入っていた。**見に行く形で足りる**：`sessions.events.list` を 10 秒ごとに読んで `agent.custom_tool_use` を見つけ、手元から `user.custom_tool_result` で答えると続きが走って止まった＝外から入る口（Webhook）は要らない。資料どおり、定時の実行は最大 9 分ずれる。試しの定時の起動は止めたまま残した（消していない）。
+  - ⑥ 費用：4 回で合わせて $0.32。入力はほとんどキャッシュの読み（②で 78,850）。名簿つきの制御役の 1 回は $0.11〜0.15。
+  - 資料と違った所：無かった。気づき：手元の断りの文は守りの層が本当に計った値で書かないと、エージェントがその文をそのまま信じる（試しの固定文では開始 10:00 の計画を 09:00 の値で断ってしまい、制御役は始まりを変えずに出し直した）。
