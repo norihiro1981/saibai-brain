@@ -200,6 +200,11 @@ class Controller:
         self.last_gap: tuple[datetime, datetime] | None = None
         self.on_action = []  # 操作の記録が 1 件できるたびに呼ぶ（置き場への写し・段 B）
         self.auto = None  # オートの起動を見に行く糸（段 C・receiver が付ける）
+        self.timer_file = run_dir / "timer.json"
+        try:
+            self.timer = json.loads(self.timer_file.read_text())
+        except (OSError, ValueError):
+            self.timer = {"on": False, "start": "12:00", "minutes": 60, "fired_on": None}
         self._quiet = False
         self._lock = threading.RLock()
 
@@ -281,8 +286,84 @@ class Controller:
             self.latest = (temp, rh)
             self.guard.observe(Reading(read_at, rh, temp))
 
+    def _timer_due(self) -> None:
+        """定時（コードのタイマー・AI なし）：毎日 start に minutes 分の計画を出す。2 分以内に気づけば出す。"""
+        t = self.timer
+        if not t.get("on"):
+            return
+        now = self.now()
+        hh, mm = map(int, t["start"].split(":"))
+        at = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+        today = now.date().isoformat()
+        if t.get("fired_on") != today and at <= now < at + timedelta(minutes=2):
+            t["fired_on"] = today
+            self._save_timer()
+            ev = [
+                {
+                    "device": "定時",
+                    "metric": "タイマー",
+                    "value": t["minutes"],
+                    "time": now.isoformat(),
+                }
+            ]
+            self.submit([Run(now, int(t["minutes"]), "定時")], ev, "定時")
+
+    def _save_timer(self) -> None:
+        self.timer_file.write_text(json.dumps(self.timer, ensure_ascii=False))
+
+    def set_timer(self, on: bool, start: str | None = None, minutes: int | None = None) -> dict:
+        """定時の入切と、開始の時刻（HH:MM）・分。分は守りの層の 1 回の上限まで。"""
+        with self._lock:
+            t = dict(self.timer)
+            if start is not None:
+                try:
+                    hh, mm = map(int, start.split(":"))
+                    assert 0 <= hh < 24 and 0 <= mm < 60
+                except (ValueError, AssertionError):
+                    return {
+                        "ok": False,
+                        "text": f"断った：開始の時刻 {start} が読めない（HH:MM）",
+                        "timer": self.timer,
+                    }
+                t["start"] = f"{hh:02d}:{mm:02d}"
+            if minutes is not None:
+                cap = self.guard.limits.max_continuous // timedelta(minutes=1)
+                if not 1 <= int(minutes) <= cap:
+                    return {
+                        "ok": False,
+                        "text": f"断った：{minutes} 分（1 回は 1〜{cap} 分）",
+                        "timer": self.timer,
+                    }
+                t["minutes"] = int(minutes)
+            if on and not self.timer.get("on"):
+                # 入れた時刻が今日の開始より後なら、今日はもう出さない（明日から）
+                now = self.now()
+                hh, mm = map(int, t["start"].split(":"))
+                if now >= now.replace(hour=hh, minute=mm, second=0, microsecond=0) + timedelta(
+                    minutes=2
+                ):
+                    t["fired_on"] = now.date().isoformat()
+            t["on"] = bool(on)
+            self.timer = t
+            self._save_timer()
+            self._action(
+                "手動",
+                "定時の入" if on else "定時の切",
+                accepted=True,
+                minutes=t["minutes"],
+                start=t["start"],
+            )
+            return {"ok": True, "text": self._timer_text(), "timer": self.timer}
+
+    def _timer_text(self) -> str:
+        t = self.timer
+        if not t.get("on"):
+            return f"定時は切（設定：毎日 {t['start']} から {t['minutes']} 分）"
+        return f"定時は入：毎日 {t['start']} から {t['minutes']} 分（守りの層を通す）"
+
     def tick(self, check_plug: bool) -> None:
         with self._lock:
+            self._timer_due()
             d = self.guard.decide(self.now())
             self.last_decision_reasons = d.reasons
             if d.changed:
@@ -406,8 +487,14 @@ class Controller:
     def set_schedule(self, on: bool) -> dict:
         with self._lock:
             v = self.schedule.set(on)
-            self._log("schedule", on=on, result=v)
-            return v
+            ok = bool(v.get("available")) and v.get("on") == on
+            self._action(
+                "手動",
+                "オートの入" if on else "オートの切",
+                accepted=ok,
+                reasons=[] if ok else [v.get("reason") or "切り替わらなかった"],
+            )
+            return v | {"ok": ok}
 
     def status(self) -> dict:
         with self._lock:
@@ -426,4 +513,5 @@ class Controller:
                 "last_plan": self.last_plan_verdict,
                 "schedule": self.schedule.get(),
                 "auto": self.auto.status() if self.auto else None,
+                "timer": self.timer | {"text": self._timer_text()},
             }

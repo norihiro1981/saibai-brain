@@ -24,8 +24,9 @@ def receiver_url() -> str:
 
 @server.tool(
     description=(
-        "栽培室の今の状態：温度・湿度・読んだ時刻（測った時刻ではない）・値が最後に変わった時刻・"
-        "受け手が生きているか。受け手が止まっていれば receiver.up=false。"
+        "栽培室の今の状態：温度・湿度・VPD・読んだ時刻（測った時刻ではない）・値が最後に変わった時刻・"
+        "受け手が生きているか・プラグ・守りの層・定時（timer）・オート（schedule と auto・経験の版）。"
+        "受け手が止まっていれば receiver.up=false。"
     ),
     annotations=ToolAnnotations(readOnlyHint=True),
 )
@@ -67,11 +68,41 @@ def stop_all(release: bool = False) -> dict:
 
 
 @server.tool(
-    description="定時の起動（毎朝の計画のエージェント）の入・切。",
+    description=(
+        "オートの入・切＝エージェントの定時の起動（毎 3 時間・振り返り→経験→計画）の再開・止める。"
+        "オートの計画も守りの層を通る。"
+    ),
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False),
 )
-def set_schedule(on: bool) -> dict:
-    return _post("/schedule", {"on": on})
+def set_auto(on: bool) -> dict:
+    return _post("/auto", {"on": on})
+
+
+@server.tool(
+    description=(
+        "定時（コードのタイマー・AI なし）の入・切と、毎日の開始の時刻（HH:MM）・運転の分。"
+        "時刻になると「今から minutes 分」の計画を守りの層に出す（断られることがある）。"
+    ),
+    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False),
+)
+def set_timer(on: bool, start: str | None = None, minutes: int | None = None) -> dict:
+    return _post("/timer", {"on": on, "start": start, "minutes": minutes})
+
+
+@server.tool(
+    description=(
+        "チャート用の記録：直近 hours 時間（0.5〜48）の温度・湿度・VPD（points＝[読んだ時刻, 温度, 湿度, VPD]）"
+        "と操作の記録（actions）・狙いの VPD の帯（target）。値が null の点は記録の穴＝線でつながない。"
+    ),
+    annotations=ToolAnnotations(readOnlyHint=True),
+)
+def get_history(hours: float = 24.0) -> dict:
+    try:
+        r = httpx.get(receiver_url() + "/history", params={"hours": hours}, timeout=10.0)
+        r.raise_for_status()
+        return r.json()
+    except httpx.HTTPError as e:
+        return {"points": [], "actions": [], "error": f"受け手に届かない：{type(e).__name__}"}
 
 
 def main() -> None:

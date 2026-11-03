@@ -207,6 +207,7 @@ class AutoRunner:
         rec["plan_text"] = self.last_text(s.id)[-800:]
         rec["experience_versions"] = self.experience_versions()
         self._log(kind="auto_run", **rec)
+        self.experience_info(cache_s=0)
         self.current, self.last = None, rec
         return rec
 
@@ -275,6 +276,7 @@ class AutoRunner:
         def loop():
             while not stop.is_set():
                 try:
+                    self.experience_info()
                     self.poll_once()
                 except Exception as e:
                     self._log(kind="auto_poll_error", error=f"{type(e).__name__}: {e}")
@@ -283,9 +285,48 @@ class AutoRunner:
         threading.Thread(target=loop, daemon=True).start()
         return stop
 
+    def experience_info(self, cache_s: float = 300.0) -> dict | None:
+        """画面に小さく出す：経験の版の数・最新の版（誰が・いつ）・傾向の行。5 分は覚えておく。"""
+        c = getattr(self, "_exp_cache", None)
+        if c and time.monotonic() - c[0] < cache_s:
+            return c[1]
+        try:
+            vs = self.experience_versions()
+            mem = next(
+                m
+                for m in self.client.beta.memory_stores.memories.list(
+                    self.ids["experience"], path_prefix="/", view="full"
+                )
+                if getattr(m, "type", "memory") == "memory" and m.path == "/experience.md"
+            )
+            lines = mem.content.splitlines()
+            trend = []
+            if "## 傾向（もとにした回の数つき）" in lines:
+                for line in lines[lines.index("## 傾向（もとにした回の数つき）") + 1 :]:
+                    if line.startswith("## "):
+                        break
+                    if line.startswith("| ") and not line.startswith(("| 季節", "|---")):
+                        trend.append(line)
+            last_rev = next(
+                (x.split("：", 1)[1] for x in lines if x.startswith("- 最後に振り返った時刻：")),
+                None,
+            )
+            info = {
+                "versions": len(vs),
+                "latest": vs[0] if vs else None,
+                "trend": trend[:4],
+                "last_reviewed": last_rev,
+            }
+        except Exception as e:
+            info = {"error": f"{type(e).__name__}"}
+        self._exp_cache = (time.monotonic(), info)
+        return info
+
     def status(self) -> dict:
         last = self.last or {}
         return {
+            # 置き場を読むのは裏の糸だけ（ここは守りの層の錠の中で呼ばれる＝通信を待たない）
+            "experience": (getattr(self, "_exp_cache", None) or (0, None))[1],
             "running": self.current is not None,
             "last": {
                 k: last.get(k)

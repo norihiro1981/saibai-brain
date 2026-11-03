@@ -13,6 +13,7 @@ import time
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
@@ -119,6 +120,69 @@ def read_meter(client: SwitchBotClient, meter_id: str) -> dict:
     return rec
 
 
+def history(run_dir: Path, now: datetime, hours: float = 24.0) -> dict:
+    """チャート用：温度・湿度・VPD（読めた回だけ）と操作の記録。2 分より空いた所は null の点を挟む（穴＝線でつながない）。
+    6 時間より長い時は 1 分に 1 点に間引く（MCP の返りを小さく）。"""
+    gap = timedelta(minutes=config.load()["receiver"]["gap_after_min"])
+    since = now - timedelta(hours=hours)
+    step = timedelta(seconds=55) if hours > 6 else timedelta(0)
+    pts: list = []
+    acts: list = []
+    prev = None
+    days = sorted({(since + timedelta(days=i)).date() for i in range(int(hours // 24) + 2)})
+    for d in days:
+        if d > now.date():
+            break
+        for name, out in ((f"meter_{d:%Y%m%d}.jsonl", "m"), (f"control_{d:%Y%m%d}.jsonl", "c")):
+            f = run_dir / name
+            if not f.exists():
+                continue
+            for line in f.read_text(encoding="utf-8").splitlines():
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    continue
+                if out == "c":
+                    if r.get("kind") == "action" and datetime.fromisoformat(r["at"]) >= since:
+                        acts.append(
+                            {
+                                k: r.get(k)
+                                for k in (
+                                    "at",
+                                    "who",
+                                    "what",
+                                    "minutes",
+                                    "accepted",
+                                    "reasons",
+                                    "plug_after",
+                                    "note",
+                                    "gap_start",
+                                    "gap_end",
+                                )
+                            }
+                        )
+                    continue
+                if not r.get("ok"):
+                    continue
+                t = datetime.fromisoformat(r["read_at"])
+                if t < since:
+                    continue
+                if prev is not None and t - prev > gap:
+                    pts.append([prev.isoformat(timespec="seconds"), None, None, None])
+                if prev is not None and step and t - prev < step:
+                    continue
+                pts.append([r["read_at"], r.get("temp_c"), r.get("rh_pct"), r.get("vpd_kpa")])
+                prev = t
+    return {
+        "now": now.isoformat(timespec="seconds"),
+        "hours": hours,
+        "columns": ["read_at", "temp_c", "rh_pct", "vpd_kpa"],
+        "points": pts,
+        "actions": acts,
+        "target": config.load()["target"],
+    }
+
+
 def make_handler(log: MeterLog, ctrl: Controller | None = None):
     """127.0.0.1 だけで待つ口。POST はすべて Controller を通る＝守りの層を通る。"""
 
@@ -132,6 +196,11 @@ def make_handler(log: MeterLog, ctrl: Controller | None = None):
             self.wfile.write(body)
 
         def do_GET(self):  # http.server の決まった名
+            if self.path.startswith("/history"):
+                q = parse_qs(urlparse(self.path).query)
+                hours = min(48.0, max(0.5, float((q.get("hours") or ["24"])[0])))
+                self._send(history(log.run_dir, now_jst(), hours))
+                return
             if self.path != "/status":
                 self.send_error(404)
                 return
@@ -155,8 +224,15 @@ def make_handler(log: MeterLog, ctrl: Controller | None = None):
                 self._send(ctrl.set_humidifier(bool(req.get("on")), minutes))
             elif self.path == "/stop":
                 self._send(ctrl.stop_all(bool(req.get("release", False))))
-            elif self.path == "/schedule":
+            elif self.path in ("/auto", "/schedule"):
                 self._send(ctrl.set_schedule(bool(req.get("on"))))
+            elif self.path == "/timer":
+                m = req.get("minutes")
+                self._send(
+                    ctrl.set_timer(
+                        bool(req.get("on")), req.get("start"), None if m is None else int(m)
+                    )
+                )
             else:
                 self.send_error(404)
 

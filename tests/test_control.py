@@ -275,3 +275,51 @@ def test_auto_plan_input_goes_through_guard(tmp_path):
     assert ctrl.submit(runs, ev, "オート").ok
     step_humidifying(ctrl, clock, 6)
     assert plug.on and actions(tmp_path)[-1]["who"] == "オート"
+
+
+def test_timer_submits_daily_run_through_guard(tmp_path):
+    """定時（AI なし）：毎日の開始の時刻に「定時」の計画を出し、守りの層を通って入り、予定の分で切れる。"""
+    ctrl, plug, clock = make(tmp_path)  # 09:20
+    r = ctrl.set_timer(True, "09:25", 10)
+    assert r["ok"] and ctrl.timer["on"]
+    assert not ctrl.set_timer(True, "25:00")["ok"]
+    assert not ctrl.set_timer(True, None, 90)["ok"]  # 1 回の上限（60 分）を越える
+    step_humidifying(ctrl, clock, 6)  # 09:26
+    assert plug.on and actions(tmp_path)[-1]["who"] == "定時"
+    step_humidifying(ctrl, clock, 11)
+    assert plug.on is False
+    end = actions(tmp_path)[-1]
+    assert end["who"] == "定時" and end["what"] == "切" and end["reasons"] == ["予定の分が終わった"]
+    step_humidifying(ctrl, clock, 30)
+    assert plug.on is False  # 同じ日にもう一度は出さない
+
+
+def test_timer_turned_on_after_start_waits_for_tomorrow(tmp_path):
+    ctrl, plug, clock = make(tmp_path)  # 09:20
+    ctrl.set_timer(True, "09:00", 10)
+    step_humidifying(ctrl, clock, 3)
+    assert plug.on is False and ctrl.timer["fired_on"] == clock.t.date().isoformat()
+
+
+def test_history_breaks_lines_at_gaps(tmp_path):
+    from saibai.receiver import history
+
+    t0 = datetime(2026, 11, 5, 9, 0, tzinfo=JST)
+    with (tmp_path / "meter_20261105.jsonl").open("w") as f:
+        for i in list(range(10)) + list(range(20, 25)):  # 10 分の穴
+            t = t0 + timedelta(minutes=i)
+            f.write(
+                json.dumps(
+                    {
+                        "read_at": t.isoformat(),
+                        "ok": True,
+                        "temp_c": 15.0,
+                        "rh_pct": 67,
+                        "vpd_kpa": 0.563,
+                    }
+                )
+                + "\n"
+            )
+    h = history(tmp_path, t0 + timedelta(minutes=30), hours=1)
+    nulls = [p for p in h["points"] if p[1] is None]
+    assert len(nulls) == 1 and len(h["points"]) == 16 and h["target"]["vpd_high_kpa"] == 0.8

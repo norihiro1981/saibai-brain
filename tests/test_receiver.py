@@ -78,9 +78,11 @@ def call_get_status(env: dict) -> dict:
             await s.initialize()
             tools = await s.list_tools()
             assert sorted(t.name for t in tools.tools) == [
+                "get_history",
                 "get_status",
+                "set_auto",
                 "set_humidifier",
-                "set_schedule",
+                "set_timer",
                 "stop_all",
             ]
             assert (
