@@ -77,8 +77,16 @@ def call_get_status(env: dict) -> dict:
         async with stdio_client(params) as (r, w), ClientSession(r, w) as s:
             await s.initialize()
             tools = await s.list_tools()
-            assert [t.name for t in tools.tools] == ["get_status"]
-            assert tools.tools[0].annotations.read_only_hint is True
+            assert sorted(t.name for t in tools.tools) == [
+                "get_status",
+                "set_humidifier",
+                "set_schedule",
+                "stop_all",
+            ]
+            assert (
+                next(t for t in tools.tools if t.name == "get_status").annotations.read_only_hint
+                is True
+            )
             res = await s.call_tool("get_status", {})
             return res.structured_content or json.loads(res.content[0].text)
 

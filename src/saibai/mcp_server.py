@@ -38,6 +38,42 @@ def get_status() -> dict:
         return {"receiver": {"up": False, "error": f"受け手に届かない：{type(e).__name__}"}}
 
 
+def _post(path: str, body: dict) -> dict:
+    try:
+        r = httpx.post(receiver_url() + path, json=body, timeout=15.0)
+        r.raise_for_status()
+        return r.json()
+    except httpx.HTTPError as e:
+        return {"ok": False, "text": f"受け手に届かない：{type(e).__name__}（何も動かしていない）"}
+
+
+@server.tool(
+    description=(
+        "加湿器の入・切。入は「今から minutes 分」の計画として守りの層に出す＝湿度・連続・1 日の上限・"
+        "入と入の間で断られることがある（断った時は text に理由）。切は今の計画を捨てる。"
+    ),
+    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False),
+)
+def set_humidifier(on: bool, minutes: int = 30) -> dict:
+    return _post("/humidifier", {"on": on, "minutes": minutes})
+
+
+@server.tool(
+    description="止める：すべてに優先して加湿器を切り、止めを解くまで計画を受けない。release=true で止めを解く。",
+    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False),
+)
+def stop_all(release: bool = False) -> dict:
+    return _post("/stop", {"release": release})
+
+
+@server.tool(
+    description="定時の起動（毎朝の計画のエージェント）の入・切。",
+    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False),
+)
+def set_schedule(on: bool) -> dict:
+    return _post("/schedule", {"on": on})
+
+
 def main() -> None:
     server.run("stdio")
 

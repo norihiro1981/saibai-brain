@@ -54,6 +54,18 @@ h1 { font-size: 1.15rem; margin: 0; letter-spacing: .04em; text-wrap: balance; }
 .note { color: var(--muted); font-size: .8rem; line-height: 1.7; margin: 0; }
 .msg { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--warn); border-radius: 6px; padding: 12px 14px; font-size: .9rem; line-height: 1.7; }
 .msg.bad { border-left-color: var(--bad); }
+.controls { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 20px; display: grid; gap: 12px; }
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.tag { font-size: .75rem; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; }
+button { font: inherit; font-weight: 700; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--accent); background: transparent; color: var(--accent); cursor: pointer; }
+button:hover:not(:disabled) { background: var(--accent); color: var(--panel); }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button:disabled { opacity: .45; cursor: default; }
+button.danger { border-color: var(--bad); color: var(--bad); }
+button.danger:hover:not(:disabled) { background: var(--bad); color: var(--panel); }
+.mins { color: var(--muted); font-size: .85rem; display: flex; align-items: center; gap: 6px; }
+.mins input { width: 4.5em; font: inherit; font-family: var(--font-num); padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
+.action { margin: 0; font-size: .9rem; min-height: 1.4em; line-height: 1.6; }
 </style>
 
 <main>
@@ -75,6 +87,33 @@ h1 { font-size: 1.15rem; margin: 0; letter-spacing: .04em; text-wrap: balance; }
 
   <div id="msg" class="msg" hidden></div>
 
+  <section class="controls" aria-label="加湿器">
+    <div class="row">
+      <span class="label">加湿器</span>
+      <strong id="plugState">—</strong>
+      <span id="plugKind" class="tag"></span>
+    </div>
+    <div class="row buttons">
+      <label class="mins" for="minutes">分 <input id="minutes" type="number" min="1" max="60" value="30"></label>
+      <button id="btnOn" type="button">入れる</button>
+      <button id="btnOff" type="button">切る</button>
+      <button id="btnStop" type="button" class="danger">止める</button>
+      <button id="btnRelease" type="button" hidden>止めを解く</button>
+    </div>
+    <div class="row buttons">
+      <span class="label">定時の起動</span>
+      <strong id="schedState">—</strong>
+      <button id="btnSchedOn" type="button">入れる</button>
+      <button id="btnSchedOff" type="button">切る</button>
+    </div>
+    <p id="actionMsg" class="action" aria-live="polite"></p>
+    <dl class="meta">
+      <dt>今日動いた</dt><dd id="usedToday">—</dd>
+      <dt>切の理由</dt><dd id="offReasons">—</dd>
+      <dt>最後の計画</dt><dd id="lastPlan">—</dd>
+    </dl>
+  </section>
+
   <dl class="meta">
     <dt>読んだ時刻</dt><dd id="readAt">—</dd>
     <dt>読んでから</dt><dd id="age">—</dd>
@@ -86,7 +125,8 @@ h1 { font-size: 1.15rem; margin: 0; letter-spacing: .04em; text-wrap: balance; }
   <p class="note">
     温湿度は、手元に常駐する受け手がクラウドを 30 秒ごとに読んだ値です。クラウドの値には測った時刻が付かないため、
     「読んだ時刻」は受け手が読んだ時刻です。この画面は Mac の Claude アプリで開いた時だけ受け手に聞けます。
-    記録は画面ではなく受け手が取っています。
+    記録は画面ではなく受け手が取っています。スイッチも「止める」も、受け手の守りの層を通ります。
+    断られた時は理由が出ます。
   </p>
 </main>
 
@@ -123,6 +163,7 @@ function render(result) {
     return;
   }
   $("receiver").textContent = `動いている（${hhmmss(s.receiver.started_at)} から）`;
+  renderControls(s);
   const m = s.meter;
   if (!m) {
     clearReadings();
@@ -151,6 +192,59 @@ function render(result) {
   }
 }
 
+function renderControls(s) {
+  const p = s.plug, g = s.guard, sc = s.schedule;
+  if (!p || !g) return;
+  const on = p.actual_on ?? p.want_on;
+  $("plugState").textContent = g.manual_stop ? "止めている" : on ? "入" : "切";
+  $("plugKind").textContent = p.kind === "switchbot" ? "本物のプラグ" : "模擬のプラグ";
+  $("btnRelease").hidden = !g.manual_stop;
+  $("btnStop").hidden = g.manual_stop;
+  $("btnOn").disabled = g.manual_stop;
+  $("minutes").max = g.max_continuous_min;
+  $("usedToday").textContent = `${g.used_today_min} 分（1 日 ${g.max_daily_min} 分まで・続けて ${g.max_continuous_min} 分まで）`;
+  $("offReasons").textContent = on ? "—" : (p.off_reasons || []).join("／") || "—";
+  $("lastPlan").textContent = s.last_plan ? `${s.last_plan.source}：${s.last_plan.text}` : "まだ無い";
+  if (sc && sc.available) {
+    $("schedState").textContent = sc.on ? `入（次 ${sc.upcoming && sc.upcoming[0] ? hhmmss(sc.upcoming[0]) : "—"}）` : "切";
+    $("btnSchedOn").disabled = sc.on; $("btnSchedOff").disabled = !sc.on;
+  } else {
+    $("schedState").textContent = sc ? (sc.reason || "使えない") : "—";
+    $("btnSchedOn").disabled = $("btnSchedOff").disabled = true;
+  }
+}
+
+let mcpRef = null;
+async function act(tool, input, label) {
+  if (!mcpRef) return;
+  const buttons = document.querySelectorAll(".controls button");
+  buttons.forEach((b) => (b.disabled = true));
+  $("actionMsg").textContent = `${label}…`;
+  try {
+    const r = await mcpRef.callTool(SERVER, tool, input);
+    const out = r.payload || {};
+    $("actionMsg").textContent = out.text || (out.available === false ? out.reason : `${label}：済み`);
+  } catch (err) {
+    const code = err && err.code;
+    $("actionMsg").textContent = code === "cancelled"
+      ? `${label}：確かめの画面で取りやめた（何も動かしていない）`
+      : `${label}：届いたか分からない（${code || "不明"}）。状態の表示で確かめてください。`;
+  } finally {
+    buttons.forEach((b) => (b.disabled = false));
+    mcpRef.invalidate(SERVER, "get_status").catch(() => {});
+  }
+}
+
+$("btnOn").addEventListener("click", () => {
+  const m = Math.max(1, Math.round(Number($("minutes").value) || 30));
+  act("set_humidifier", { on: true, minutes: m }, `${m} 分入れる`);
+});
+$("btnOff").addEventListener("click", () => act("set_humidifier", { on: false }, "切る"));
+$("btnStop").addEventListener("click", () => act("stop_all", { release: false }, "止める"));
+$("btnRelease").addEventListener("click", () => act("stop_all", { release: true }, "止めを解く"));
+$("btnSchedOn").addEventListener("click", () => act("set_schedule", { on: true }, "定時の起動を入れる"));
+$("btnSchedOff").addEventListener("click", () => act("set_schedule", { on: false }, "定時の起動を切る"));
+
 function onError(err) {
   const code = err && err.code;
   if (code === "server_not_connected") {
@@ -175,6 +269,7 @@ function onError(err) {
     showMsg("この画面では受け手に聞けません。Mac の Claude アプリで開いてください。", true);
     return;
   }
+  mcpRef = mcp;
   mcp.watchTool(SERVER, "get_status", null, (ev) => {
     if (ev.type === "data") render(ev.result); else onError(ev.error);
   }, { refetchInterval: 30000 });

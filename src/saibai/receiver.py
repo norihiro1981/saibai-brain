@@ -17,6 +17,8 @@ from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
+from saibai.control import Controller, DeploymentSchedule, DummyPlug, NoSchedule, SwitchBotPlug
+from saibai.guard import REAL, Guard
 from saibai.switchbot import SwitchBotClient
 
 JST = ZoneInfo("Asia/Tokyo")
@@ -84,9 +86,6 @@ class MeterLog:
                 if not self.last_attempt or self.last_attempt["ok"]
                 else self.last_attempt.get("error"),
                 "consecutive_errors": self.consecutive_errors,
-                # 段 G で足す：プラグの状態・定時の起動の状態
-                "plug": None,
-                "schedule": None,
             }
 
 
@@ -115,18 +114,46 @@ def read_meter(client: SwitchBotClient, meter_id: str) -> dict:
     return rec
 
 
-def make_handler(log: MeterLog):
+def make_handler(log: MeterLog, ctrl: Controller | None = None):
+    """127.0.0.1 だけで待つ口。POST はすべて Controller を通る＝守りの層を通る。"""
+
     class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):  # http.server の決まった名
-            if self.path != "/status":
-                self.send_error(404)
-                return
-            body = json.dumps(log.status(now_jst()), ensure_ascii=False).encode()
-            self.send_response(200)
+        def _send(self, obj: dict, code: int = 200) -> None:
+            body = json.dumps(obj, ensure_ascii=False).encode()
+            self.send_response(code)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+
+        def do_GET(self):  # http.server の決まった名
+            if self.path != "/status":
+                self.send_error(404)
+                return
+            out = log.status(now_jst())
+            if ctrl:
+                out |= ctrl.status()
+            self._send(out)
+
+        def do_POST(self):
+            if ctrl is None:
+                self.send_error(404)
+                return
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+                req = json.loads(self.rfile.read(n) or b"{}")
+            except ValueError:
+                self._send({"ok": False, "text": "JSON が読めない"}, 400)
+                return
+            if self.path == "/humidifier":
+                minutes = int(req.get("minutes", 30))
+                self._send(ctrl.set_humidifier(bool(req.get("on")), minutes))
+            elif self.path == "/stop":
+                self._send(ctrl.stop_all(bool(req.get("release", False))))
+            elif self.path == "/schedule":
+                self._send(ctrl.set_schedule(bool(req.get("on"))))
+            else:
+                self.send_error(404)
 
         def log_message(self, *args):  # 毎回の問い合わせは画面に出さない
             pass
@@ -139,21 +166,46 @@ def main() -> None:
     client = SwitchBotClient(os.environ["SWITCHBOT_TOKEN"], os.environ["SWITCHBOT_SECRET"])
     meter_id = os.environ.get("SWITCHBOT_METER_ID") or client.find_device("MeterPlus")
     port = int(os.environ.get("SAIBAI_RECEIVER_PORT", DEFAULT_PORT))
-    log = MeterLog(Path(os.environ.get("SAIBAI_RUN_DIR", ROOT / "run")))
+    run_dir = Path(os.environ.get("SAIBAI_RUN_DIR", ROOT / "run"))
+    log = MeterLog(run_dir)
 
-    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(log))
+    # 本物のプラグは、人が付いている時に SAIBAI_PLUG=switchbot を付けて起動した時だけ
+    if os.environ.get("SAIBAI_PLUG") == "switchbot":
+        plug_id = os.environ.get("SWITCHBOT_PLUG_ID") or client.find_device("Plug Mini (JP)")
+        plug = SwitchBotPlug(client, plug_id)
+    else:
+        plug = DummyPlug()
+    schedule = NoSchedule()
+    if dep := os.environ.get("SAIBAI_DEPLOYMENT_ID"):
+        import anthropic
+
+        schedule = DeploymentSchedule(anthropic.Anthropic(), dep)
+    ctrl = Controller(Guard(REAL), plug, schedule, run_dir, now_jst)
+    ctrl.start()
+
+    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(log, ctrl))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     print(
-        f"受け手を起動：http://127.0.0.1:{port}/status・{READ_EVERY_S} 秒ごとに読む・記録＝{log.run_dir}"
+        f"受け手を起動：http://127.0.0.1:{port}/status・{READ_EVERY_S} 秒ごとに読む・記録＝{run_dir}"
+    )
+    print(
+        f"プラグ＝{plug.kind}（起動したので切にした）・守りの層＝実機の線（続けて 60 分・1 日 120 分）"
     )
 
+    n = 0
     while True:
         t0 = time.monotonic()
         rec = read_meter(client, meter_id)
         log.add(rec)
+        if rec["ok"]:
+            ctrl.observe(datetime.fromisoformat(rec["read_at"]), float(rec["rh_pct"]))
+        # 判断は 30 秒ごと（守りの層の 1 tick＝60 秒より短い）・プラグの点検は毎分
+        ctrl.tick(check_plug=n % 2 == 0)
+        n += 1
         mark = "○" if rec["ok"] else "×"
         print(
-            f"{rec['read_at']} {mark} {rec.get('temp_c')}℃ {rec.get('rh_pct')}% {rec.get('error', '')}"
+            f"{rec['read_at']} {mark} {rec.get('temp_c')}℃ {rec.get('rh_pct')}% "
+            f"加湿器={'入' if ctrl.guard.on else '切'} {rec.get('error', '')}"
         )
         time.sleep(max(0.0, READ_EVERY_S - (time.monotonic() - t0)))
 
