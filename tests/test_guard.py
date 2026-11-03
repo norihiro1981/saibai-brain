@@ -302,3 +302,26 @@ def test_no_rise_while_on_turns_off():
     on = [d.on for d in log]
     assert on[:15] == [True] * 15 and not any(on[15:])
     assert any("上がらない" in r for r in log[15].reasons)
+
+
+def test_auto_plan_keeps_manual_run():
+    """オートの計画（空＝入れない）は、手動の運転を消さない。出し手ごとに置き換える。"""
+    g = fresh_guard(REAL)
+    assert g.submit_plan([Run(T0, 30, "手動")], EV, T0).ok
+    assert g.decide(T0).on
+    v = g.submit_plan([], EV, T0 + timedelta(minutes=1), source="オート")
+    assert v.ok and [r.source for r in g.runs] == ["手動"]
+    # 手動の運転に重なるオートの運転は、間が足りないとして断る
+    v = g.submit_plan(
+        [Run(T0 + timedelta(minutes=10), 30, "オート")], EV, T0 + timedelta(minutes=1)
+    )
+    assert not v.ok and "間が" in v.text()
+    # 1 日の上限は、手動の残りとオートを合わせて数える（実機 120 分）
+    v = g.submit_plan(
+        [Run(T0 + timedelta(hours=2), 60, "オート"), Run(T0 + timedelta(hours=4), 40, "オート")],
+        EV,
+        T0 + timedelta(minutes=1),
+    )
+    assert not v.ok and "1 日の上限" in v.text()
+    v = g.submit_plan([Run(T0 + timedelta(hours=2), 60, "オート")], EV, T0 + timedelta(minutes=1))
+    assert v.ok and sorted(r.source for r in g.runs) == ["オート", "手動"]

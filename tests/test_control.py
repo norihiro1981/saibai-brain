@@ -248,3 +248,30 @@ def test_status_has_vpd(tmp_path):
     t = datetime(2026, 11, 5, 9, 0, tzinfo=JST)
     log.add({"read_at": t.isoformat(), "ok": True, "temp_c": 15.0, "rh_pct": 80, "vpd_kpa": 0.341})
     assert log.status(t)["meter"]["vpd_kpa"] == 0.341
+
+
+def test_auto_plan_input_goes_through_guard(tmp_path):
+    """オートの計画（submit_plan の入力）は守りの層を通る。読めない入力は理由つきで断る。"""
+    from saibai.auto import parse_plan
+
+    ctrl, plug, clock = make(tmp_path)
+    runs, ev, err = parse_plan({"runs": [{"start": "あした", "minutes": 10}], "evidence": []})
+    assert err and "読めない" in err
+    start = (clock.t + timedelta(minutes=5)).isoformat()
+    runs, ev, err = parse_plan(
+        {
+            "runs": [{"start": start, "minutes": 90}],
+            "evidence": [{"metric": "vpd_kpa", "value": 0.9}],
+        }
+    )
+    v = ctrl.submit(runs, ev, "オート")
+    assert not v.ok and "1〜60 分" in v.text()
+    runs, ev, _ = parse_plan(
+        {
+            "runs": [{"start": start, "minutes": 20}],
+            "evidence": [{"metric": "vpd_kpa", "value": 0.9}],
+        }
+    )
+    assert ctrl.submit(runs, ev, "オート").ok
+    step_humidifying(ctrl, clock, 6)
+    assert plug.on and actions(tmp_path)[-1]["who"] == "オート"

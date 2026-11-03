@@ -198,8 +198,14 @@ def main() -> None:
         plug = SwitchBotPlug(client, plug_id)
     else:
         plug = DummyPlug()
+    # オートの入切＝定時の起動（run/agents.json の deployment）の止める・再開
+    ids = (
+        json.loads((run_dir / "agents.json").read_text())
+        if (run_dir / "agents.json").exists()
+        else {}
+    )
     schedule = NoSchedule()
-    if dep := os.environ.get("SAIBAI_DEPLOYMENT_ID"):
+    if dep := ids.get("deployment") or os.environ.get("SAIBAI_DEPLOYMENT_ID"):
         import anthropic
 
         schedule = DeploymentSchedule(anthropic.Anthropic(), dep)
@@ -208,6 +214,16 @@ def main() -> None:
     if sync:
         ctrl.on_action.append(sync[1])
     ctrl.start()
+    if ids.get("deployment") and ids.get("control"):
+        import anthropic
+
+        from saibai.auto import AutoRunner
+
+        ctrl.auto = AutoRunner(
+            anthropic.Anthropic(), ids, ctrl, run_dir, now_jst, sync=sync[0] if sync else None
+        )
+        ctrl.auto.start()
+        print(f"オート：定時の起動 {ids['deployment']} を見に行く（振り返り→計画）")
 
     server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(log, ctrl))
     threading.Thread(target=server.serve_forever, daemon=True).start()

@@ -207,8 +207,13 @@ class Guard:
         self.runs = [r for r in self.runs if r.end > now]
 
     # ---- 計画 ----
-    def submit_plan(self, runs: list[Run], evidence: list[dict], now: datetime) -> Verdict:
+    def submit_plan(
+        self, runs: list[Run], evidence: list[dict], now: datetime, source: str | None = None
+    ) -> Verdict:
+        """計画を確かめる。受け付けたら、同じ出し手（手動／定時／オート）の前の計画だけを置き換える
+        （ほかの出し手の運転は残し、合わせた全体で間と 1 日の上限を確かめる）。runs が空＝この出し手は入れない。"""
         L = self.limits
+        src = source or (runs[0].source if runs else "オート")
         reasons: list[str] = []
         if self.manual_stop:
             return Verdict(False, ["手で止めている（止めを解くまで計画は受けない）"])
@@ -220,6 +225,7 @@ class Guard:
         if any(r.start.tzinfo is None for r in runs):
             return Verdict(False, ["始まりの時刻に時差（+09:00）が付いていない"])
         runs = sorted(runs, key=lambda r: r.start)
+        others = [r for r in self.runs if r.source != src and r.end > now]
         for r in runs:
             if not 1 <= r.minutes <= L.max_continuous / MIN:
                 reasons.append(
@@ -231,7 +237,10 @@ class Guard:
                 reasons.append(
                     f"{r.start:%m/%d %H:%M} は先すぎる（{L.horizon // timedelta(hours=1)} 時間まで）"
                 )
-        for a, b in zip(runs, runs[1:], strict=False):
+        combined = sorted(others + runs, key=lambda r: r.start)
+        for a, b in zip(combined, combined[1:], strict=False):
+            if a in others and b in others:
+                continue  # すでに受け付けた運転どうし
             if b.start - a.end < L.min_gap:
                 reasons.append(
                     f"{a.end:%H:%M} に切って {b.start:%H:%M} に入れる＝間が {L.min_gap // MIN} 分に足りない"
@@ -241,11 +250,13 @@ class Guard:
                 f"{self.last_off:%H:%M} に切ったばかり＝{(self.last_off + L.min_gap):%H:%M} より前には入れない"
             )
         days: dict[date, timedelta] = {}
-        for r in runs:
-            d = jst_day(r.start)
+        # ほかの出し手の運転は、これから動く分だけを足す（動いた分は used に入っている）
+        ahead = [(max(r.start, now), r.end) for r in others] + [(r.start, r.end) for r in runs]
+        for a0, a1 in ahead:
+            d = jst_day(a0)
             while True:
                 d0, d1 = day_bounds(d)
-                part = overlap(r.start, r.end, d0, d1)
+                part = overlap(a0, a1, d0, d1)
                 if part <= timedelta(0):
                     break
                 days[d] = days.get(d, timedelta(0)) + part
@@ -266,7 +277,7 @@ class Guard:
             reasons.append("今はセンサーが疑わしいので入れない：" + "・".join(problems))
         if reasons:
             return Verdict(False, reasons)
-        self.runs = runs
+        self.runs = combined
         self.last_plan_at = now
         return Verdict(True, [])
 

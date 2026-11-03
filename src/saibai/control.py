@@ -199,6 +199,7 @@ class Controller:
         self.latest: tuple[float | None, float] | None = None  # 最後の読み（温度・湿度）
         self.last_gap: tuple[datetime, datetime] | None = None
         self.on_action = []  # 操作の記録が 1 件できるたびに呼ぶ（置き場への写し・段 B）
+        self.auto = None  # オートの起動を見に行く糸（段 C・receiver が付ける）
         self._quiet = False
         self._lock = threading.RLock()
 
@@ -318,7 +319,7 @@ class Controller:
     def submit(self, runs: list[Run], evidence: list[dict], source: str) -> Verdict:
         """計画を守りの層に出す（オートのエージェント・定時のタイマー）。"""
         with self._lock:
-            v = self.guard.submit_plan(runs, evidence, self.now())
+            v = self.guard.submit_plan(runs, evidence, self.now(), source)
             self.last_plan_verdict = {"source": source, "ok": v.ok, "text": v.text()}
             if not self._quiet:
                 self._action(
@@ -424,4 +425,5 @@ class Controller:
                 "guard": self.guard.snapshot(now),
                 "last_plan": self.last_plan_verdict,
                 "schedule": self.schedule.get(),
+                "auto": self.auto.status() if self.auto else None,
             }
