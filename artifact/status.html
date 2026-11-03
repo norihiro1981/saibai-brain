@@ -1,0 +1,182 @@
+<title>栽培室の計器盤</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* 計器盤：温度と湿度の 2 つの読みを大きく、その下に「いつ読んだか」と受け手の状態を 1 段で */
+:root {
+  --bg: #f3f5f1;        /* 苔の色に寄せた紙 */
+  --panel: #ffffff;
+  --fg: #1d2620;
+  --muted: #5d6b62;
+  --line: #d5ddd6;
+  --accent: #3f6b4e;    /* 葉の深い緑 */
+  --ok: #2f7a4a;
+  --warn: #a86a12;
+  --bad: #b23b2e;
+  --font-display: "Zen Kaku Gothic New", "Hiragino Sans", "Noto Sans JP", sans-serif;
+  --font-num: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141a16; --panel: #1c241f; --fg: #e4ebe5; --muted: #98a79d; --line: #2e3a32;
+    --accent: #8fc09f; --ok: #6cc28b; --warn: #e2a64a; --bad: #ef7d6f; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #141a16; --panel: #1c241f; --fg: #e4ebe5; --muted: #98a79d; --line: #2e3a32;
+  --accent: #8fc09f; --ok: #6cc28b; --warn: #e2a64a; --bad: #ef7d6f; color-scheme: dark;
+}
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--font-display);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 24px;
+}
+main { max-width: 720px; margin: 0 auto; display: grid; gap: 16px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; }
+h1 { font-size: 1.15rem; margin: 0; letter-spacing: .04em; text-wrap: balance; }
+.pill {
+  font-size: .8rem; padding: 3px 10px; border-radius: 999px; border: 1px solid currentColor;
+  font-weight: 700; letter-spacing: .05em;
+}
+.pill.ok { color: var(--ok); } .pill.warn { color: var(--warn); } .pill.bad { color: var(--bad); }
+.pill.wait { color: var(--muted); }
+.gauges { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.gauge { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; display: grid; gap: 4px; }
+.label { color: var(--muted); font-size: .8rem; letter-spacing: .08em; }
+.value { font-family: var(--font-num); font-size: clamp(2.6rem, 9vw, 3.6rem); font-weight: 500; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.unit { font-size: 1.1rem; color: var(--muted); margin-left: 4px; }
+.stale .value { color: var(--muted); }
+.meta { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; font-size: .9rem; margin: 0; }
+.meta dt { color: var(--muted); }
+.meta dd { margin: 0; font-family: var(--font-num); font-variant-numeric: tabular-nums; min-width: 0; overflow-wrap: anywhere; }
+.note { color: var(--muted); font-size: .8rem; line-height: 1.7; margin: 0; }
+.msg { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--warn); border-radius: 6px; padding: 12px 14px; font-size: .9rem; line-height: 1.7; }
+.msg.bad { border-left-color: var(--bad); }
+</style>
+
+<main>
+  <header>
+    <h1>栽培室の計器盤</h1>
+    <span id="pill" class="pill wait">つないでいます</span>
+  </header>
+
+  <section class="gauges" id="gauges">
+    <div class="gauge">
+      <span class="label">温度（温湿度計・クラウド）</span>
+      <span class="value"><span id="temp">--.-</span><span class="unit">℃</span></span>
+    </div>
+    <div class="gauge">
+      <span class="label">相対湿度</span>
+      <span class="value"><span id="rh">--</span><span class="unit">%RH</span></span>
+    </div>
+  </section>
+
+  <div id="msg" class="msg" hidden></div>
+
+  <dl class="meta">
+    <dt>読んだ時刻</dt><dd id="readAt">—</dd>
+    <dt>読んでから</dt><dd id="age">—</dd>
+    <dt>値が変わらず</dt><dd id="unchanged">—</dd>
+    <dt>受け手</dt><dd id="receiver">—</dd>
+    <dt>この画面が聞いた時刻</dt><dd id="fetched">—</dd>
+  </dl>
+
+  <p class="note">
+    温湿度は、手元に常駐する受け手がクラウドを 30 秒ごとに読んだ値です。クラウドの値には測った時刻が付かないため、
+    「読んだ時刻」は受け手が読んだ時刻です。この画面は Mac の Claude アプリで開いた時だけ受け手に聞けます。
+    記録は画面ではなく受け手が取っています。
+  </p>
+</main>
+
+<script>
+const SERVER = "host:saibai";
+const STALE_S = 300; // 守りの層の「古い値で動かさない」と同じ 5 分
+const $ = (id) => document.getElementById(id);
+
+function hhmmss(iso) {
+  const d = new Date(iso);
+  return d.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+function span(sec) {
+  if (sec < 90) return `${Math.round(sec)} 秒`;
+  if (sec < 5400) return `${Math.round(sec / 60)} 分`;
+  return `${(sec / 3600).toFixed(1)} 時間`;
+}
+function setPill(cls, text) { const p = $("pill"); p.className = "pill " + cls; p.textContent = text; }
+function showMsg(text, bad) { const m = $("msg"); m.textContent = text; m.className = "msg" + (bad ? " bad" : ""); m.hidden = !text; }
+function clearReadings() {
+  $("temp").textContent = "--.-"; $("rh").textContent = "--";
+  for (const id of ["readAt", "age", "unchanged", "receiver"]) $(id).textContent = "—";
+}
+
+function render(result) {
+  const s = result.payload || {};
+  const fetchedAt = result.cache ? new Date(result.cache.storedAt) : new Date();
+  $("fetched").textContent = hhmmss(fetchedAt.toISOString());
+  if (!s.receiver || s.receiver.up === false) {
+    clearReadings();
+    $("receiver").textContent = "止まっている";
+    setPill("bad", "受け手が止まっている");
+    showMsg("受け手に届きません。ターミナルで受け手（saibai-receiver）が動いているかを見てください。記録もその間は止まっています。", true);
+    return;
+  }
+  $("receiver").textContent = `動いている（${hhmmss(s.receiver.started_at)} から）`;
+  const m = s.meter;
+  if (!m) {
+    clearReadings();
+    $("receiver").textContent = "動いている・まだ一度も読めていない";
+    setPill("warn", "まだ読めていない");
+    showMsg(s.last_error ? `読めなかった理由：${s.last_error}` : "受け手が最初の読みを待っています。", false);
+    return;
+  }
+  $("temp").textContent = Number(m.temp_c).toFixed(1);
+  $("rh").textContent = String(m.rh_pct);
+  $("readAt").textContent = hhmmss(m.read_at);
+  $("age").textContent = span(m.age_s);
+  $("unchanged").textContent = m.unchanged_since
+    ? `${span((new Date(s.now) - new Date(m.unchanged_since)) / 1000)}（${hhmmss(m.unchanged_since)} から）` : "—";
+  const stale = m.age_s > STALE_S;
+  $("gauges").classList.toggle("stale", stale);
+  if (stale) {
+    setPill("warn", "値が古い");
+    showMsg(`最後に読めたのは ${span(m.age_s)} 前です。${s.last_error ? "読めなかった理由：" + s.last_error : ""}`, false);
+  } else if (s.last_read_ok === false) {
+    setPill("warn", `読み損ね ${s.consecutive_errors} 回`);
+    showMsg(`直近の読みが失敗しました：${s.last_error || "理由不明"}。表示は最後に読めた値です。`, false);
+  } else {
+    setPill("ok", "読めている");
+    showMsg("", false);
+  }
+}
+
+function onError(err) {
+  const code = err && err.code;
+  if (code === "server_not_connected") {
+    clearReadings();
+    setPill("bad", "Claude アプリの外");
+    showMsg("受け手の口（saibai）に届きません。Mac の Claude アプリで、MCP の設定に saibai を足して再起動してから開いてください。", true);
+  } else if (code === "not_in_manifest" || code === "approval_required" || code === "blocked_by_policy") {
+    clearReadings();
+    setPill("bad", "許可がない");
+    showMsg("この画面に受け手の口を使う許可がありません。Artifact の Permissions から saibai を許可してください。", true);
+  } else {
+    // 一時の失敗：最後の値を残して印だけ付ける
+    setPill("warn", "聞き損ねた");
+    showMsg(`受け手の口に聞き損ねました（${code || "不明"}）。30 秒後にもう一度聞きます。`, false);
+  }
+}
+
+(async () => {
+  const mcp = await claude.use("mcp");
+  if (!mcp) {
+    setPill("bad", "使えない画面");
+    showMsg("この画面では受け手に聞けません。Mac の Claude アプリで開いてください。", true);
+    return;
+  }
+  mcp.watchTool(SERVER, "get_status", null, (ev) => {
+    if (ev.type === "data") render(ev.result); else onError(ev.error);
+  }, { refetchInterval: 30000 });
+})();
+</script>

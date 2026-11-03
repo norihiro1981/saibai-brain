@@ -11,6 +11,10 @@ dependencies = [
     "python-dotenv",
 ]
 
+[project.scripts]
+saibai-receiver = "saibai.receiver:main"
+saibai-mcp = "saibai.mcp_server:main"
+
 [project.optional-dependencies]
 # 温湿度計の Bluetooth を直接読む予備の道（主の道はクラウドの 30 秒）
 ble = ["bleak"]
@@ -35,3 +39,5 @@ extend-exclude = ["spikes"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+# 日本語の文は幅が広いので行の長さは ruff format に任せる
+ignore = ["E501"]

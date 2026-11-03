@@ -16,3 +16,6 @@ spikes/logs/
 
 # macOS
 .DS_Store
+
+# 受け手の記録（手元だけ）
+run/

@@ -1,0 +1,162 @@
+"""受け手（手元に常駐）：温湿度計をクラウドから 30 秒ごとに読み、読んだ時刻つきで貯める。
+
+- Claude アプリの外（ターミナル・自動起動）で動かす＝アプリや会話を閉じても記録が止まらない。
+- 今の状態は 127.0.0.1 の HTTP（GET /status）でだけ出す。MCP サーバーはこれに聞く薄い口（設計書 §9）。
+- クラウドの値には測った時刻が付かない＝ここで付けるのは「読んだ時刻」。値が最後に変わった時刻も持ち、
+  止まりの見分け（設計書 §8 の宿題）に使う。
+"""
+
+import json
+import os
+import threading
+import time
+from datetime import datetime
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+from dotenv import load_dotenv
+
+from saibai.switchbot import SwitchBotClient
+
+JST = ZoneInfo("Asia/Tokyo")
+READ_EVERY_S = 30  # 1 日 2,880 回＝上限 1 万回の内（設計書 §8）
+DEFAULT_PORT = 8765
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def now_jst() -> datetime:
+    return datetime.now(JST)
+
+
+class MeterLog:
+    """読みを JSON Lines に貯め、最新の 1 件と「値が最後に変わった時刻」を覚える。"""
+
+    def __init__(self, run_dir: Path):
+        self.run_dir = run_dir
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+        self.started_at = now_jst()
+        self.latest: dict | None = None  # 最後に読めた値
+        self.last_attempt: dict | None = None  # 最後の試み（失敗も含む）
+        self.changed_at: datetime | None = None
+        self.consecutive_errors = 0
+        self._lock = threading.Lock()
+
+    def add(self, rec: dict) -> None:
+        with self._lock:
+            self.last_attempt = rec
+            if rec["ok"]:
+                prev = self.latest
+                same = prev is not None and all(prev[k] == rec[k] for k in ("temp_c", "rh_pct"))
+                if not same:
+                    self.changed_at = datetime.fromisoformat(rec["read_at"])
+                self.latest = rec
+                self.consecutive_errors = 0
+            else:
+                self.consecutive_errors += 1
+            day = rec["read_at"][:10].replace("-", "")
+            with (self.run_dir / f"meter_{day}.jsonl").open("a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+    def status(self, now: datetime) -> dict:
+        with self._lock:
+            m = None
+            if self.latest:
+                read_at = datetime.fromisoformat(self.latest["read_at"])
+                m = {
+                    "temp_c": self.latest["temp_c"],
+                    "rh_pct": self.latest["rh_pct"],
+                    "battery": self.latest.get("battery"),
+                    "read_at": self.latest["read_at"],
+                    "age_s": round((now - read_at).total_seconds(), 1),
+                    "unchanged_since": self.changed_at.isoformat() if self.changed_at else None,
+                }
+            return {
+                "now": now.isoformat(),
+                "receiver": {
+                    "up": True,
+                    "started_at": self.started_at.isoformat(),
+                    "read_every_s": READ_EVERY_S,
+                },
+                "meter": m,
+                "last_read_ok": self.last_attempt["ok"] if self.last_attempt else None,
+                "last_error": None
+                if not self.last_attempt or self.last_attempt["ok"]
+                else self.last_attempt.get("error"),
+                "consecutive_errors": self.consecutive_errors,
+                # 段 G で足す：プラグの状態・定時の起動の状態
+                "plug": None,
+                "schedule": None,
+            }
+
+
+def read_meter(client: SwitchBotClient, meter_id: str) -> dict:
+    """1 回読む。失敗しても例外にせず、印を付けた記録を返す。"""
+    read_at = now_jst().isoformat(timespec="seconds")
+    try:
+        r = client.status(meter_id)
+    except Exception as e:  # 通信の失敗も記録に残して次の回に回す
+        return {"read_at": read_at, "ok": False, "error": f"{type(e).__name__}: {e}"}
+    b = r.body
+    ok = r.http == 200 and r.status_code == 100 and "humidity" in b
+    rec = {
+        "read_at": read_at,
+        "ok": ok,
+        "http": r.http,
+        "status_code": r.status_code,
+        "roundtrip_s": round(r.roundtrip_s, 3),
+        "temp_c": b.get("temperature"),
+        "rh_pct": b.get("humidity"),
+        "battery": b.get("battery"),
+    }
+    if not ok:
+        rec["error"] = r.message or "値が返らなかった"
+        rec["body_keys"] = sorted(b)  # 宿題 ①：ハブを抜いた時に何が返るかを残す
+    return rec
+
+
+def make_handler(log: MeterLog):
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):  # http.server の決まった名
+            if self.path != "/status":
+                self.send_error(404)
+                return
+            body = json.dumps(log.status(now_jst()), ensure_ascii=False).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):  # 毎回の問い合わせは画面に出さない
+            pass
+
+    return Handler
+
+
+def main() -> None:
+    load_dotenv(ROOT / ".env")
+    client = SwitchBotClient(os.environ["SWITCHBOT_TOKEN"], os.environ["SWITCHBOT_SECRET"])
+    meter_id = os.environ.get("SWITCHBOT_METER_ID") or client.find_device("MeterPlus")
+    port = int(os.environ.get("SAIBAI_RECEIVER_PORT", DEFAULT_PORT))
+    log = MeterLog(Path(os.environ.get("SAIBAI_RUN_DIR", ROOT / "run")))
+
+    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(log))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    print(
+        f"受け手を起動：http://127.0.0.1:{port}/status・{READ_EVERY_S} 秒ごとに読む・記録＝{log.run_dir}"
+    )
+
+    while True:
+        t0 = time.monotonic()
+        rec = read_meter(client, meter_id)
+        log.add(rec)
+        mark = "○" if rec["ok"] else "×"
+        print(
+            f"{rec['read_at']} {mark} {rec.get('temp_c')}℃ {rec.get('rh_pct')}% {rec.get('error', '')}"
+        )
+        time.sleep(max(0.0, READ_EVERY_S - (time.monotonic() - t0)))
+
+
+if __name__ == "__main__":
+    main()
