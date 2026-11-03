@@ -1,0 +1,226 @@
+{
+ "source": "summer_2026-08-15_2026-09-11.csv",
+ "summary": {
+  "node_a/node_c:disagree:rh_pct": 1,
+  "node_a/node_c:disagree:temp_c": 3,
+  "node_c:stuck:rh_pct": 3,
+  "soil_a:spike:soil_raw": 2,
+  "soil_a:step:soil_raw": 5
+ },
+ "findings": [
+  {
+   "device": "node_c",
+   "kind": "stuck",
+   "metric": "rh_pct",
+   "start": "2026-08-28T02:31:28+09:00",
+   "end": "2026-08-29T13:56:34+09:00",
+   "evidence": {
+    "value": 100.0,
+    "minutes": 2125.1,
+    "readings": 2090,
+    "limit_min": 15.0
+   }
+  },
+  {
+   "device": "node_c",
+   "kind": "stuck",
+   "metric": "rh_pct",
+   "start": "2026-08-29T15:49:29+09:00",
+   "end": "2026-08-30T11:14:17+09:00",
+   "evidence": {
+    "value": 100.0,
+    "minutes": 1164.8,
+    "readings": 1146,
+    "limit_min": 15.0
+   }
+  },
+  {
+   "device": "node_c",
+   "kind": "stuck",
+   "metric": "rh_pct",
+   "start": "2026-08-30T22:26:42+09:00",
+   "end": "2026-08-31T10:42:12+09:00",
+   "evidence": {
+    "value": 100.0,
+    "minutes": 735.5,
+    "readings": 724,
+    "limit_min": 15.0
+   }
+  },
+  {
+   "device": "node_a/node_c",
+   "kind": "disagree",
+   "metric": "temp_c",
+   "start": "2026-09-03T15:00:00+09:00",
+   "end": "2026-09-04T02:55:00+09:00",
+   "evidence": {
+    "diff_at_worst": -1.45,
+    "usual_diff": 1.79,
+    "worst_at": "2026-09-03T15:15:00+09:00",
+    "limit": 2.0,
+    "minutes": 715
+   }
+  },
+  {
+   "device": "node_a/node_c",
+   "kind": "disagree",
+   "metric": "rh_pct",
+   "start": "2026-09-03T15:05:00+09:00",
+   "end": "2026-09-04T02:55:00+09:00",
+   "evidence": {
+    "diff_at_worst": 4.43,
+    "usual_diff": -8.36,
+    "worst_at": "2026-09-04T00:45:00+09:00",
+    "limit": 10.0,
+    "minutes": 710
+   }
+  },
+  {
+   "device": "node_a/node_c",
+   "kind": "disagree",
+   "metric": "temp_c",
+   "start": "2026-09-08T00:25:00+09:00",
+   "end": "2026-09-08T08:25:00+09:00",
+   "evidence": {
+    "diff_at_worst": -3.16,
+    "usual_diff": -0.6,
+    "worst_at": "2026-09-08T07:55:00+09:00",
+    "limit": 2.0,
+    "minutes": 480
+   }
+  },
+  {
+   "device": "node_a/node_c",
+   "kind": "disagree",
+   "metric": "temp_c",
+   "start": "2026-09-08T15:10:00+09:00",
+   "end": "2026-09-08T18:50:00+09:00",
+   "evidence": {
+    "diff_at_worst": -3.1,
+    "usual_diff": -0.59,
+    "worst_at": "2026-09-08T17:25:00+09:00",
+    "limit": 2.0,
+    "minutes": 220
+   }
+  },
+  {
+   "device": "soil_a",
+   "kind": "spike",
+   "metric": "soil_raw",
+   "start": "2026-09-10T15:49:04+09:00",
+   "end": "2026-09-10T19:41:00+09:00",
+   "evidence": {
+    "from": 952.0,
+    "to": 696.0,
+    "delta": -256.0,
+    "limit": 200.0,
+    "median_before_30m": 950.5,
+    "median_after_30m": 900.0,
+    "count": 82,
+    "max_abs_delta": 884.0
+   }
+  },
+  {
+   "device": "soil_a",
+   "kind": "step",
+   "metric": "soil_raw",
+   "start": "2026-09-10T17:15:32+09:00",
+   "end": "2026-09-10T17:19:36+09:00",
+   "evidence": {
+    "from": 617.0,
+    "to": 1011.0,
+    "delta": 394.0,
+    "limit": 200.0,
+    "median_before_30m": 803.0,
+    "median_after_30m": 928.0,
+    "count": 2,
+    "max_abs_delta": 504.0
+   }
+  },
+  {
+   "device": "soil_a",
+   "kind": "step",
+   "metric": "soil_raw",
+   "start": "2026-09-10T18:35:54+09:00",
+   "end": "2026-09-10T19:17:37+09:00",
+   "evidence": {
+    "from": 952.0,
+    "to": 637.0,
+    "delta": -315.0,
+    "limit": 200.0,
+    "median_before_30m": 940.0,
+    "median_after_30m": 825.0,
+    "count": 18,
+    "max_abs_delta": 622.0
+   }
+  },
+  {
+   "device": "soil_a",
+   "kind": "spike",
+   "metric": "soil_raw",
+   "start": "2026-09-11T09:45:21+09:00",
+   "end": "2026-09-11T21:09:59+09:00",
+   "evidence": {
+    "from": 949.0,
+    "to": 515.0,
+    "delta": -434.0,
+    "limit": 200.0,
+    "median_before_30m": 944.5,
+    "median_after_30m": 923.0,
+    "count": 236,
+    "max_abs_delta": 968.0
+   }
+  },
+  {
+   "device": "soil_a",
+   "kind": "step",
+   "metric": "soil_raw",
+   "start": "2026-09-11T13:15:56+09:00",
+   "end": "2026-09-11T14:04:46+09:00",
+   "evidence": {
+    "from": 606.0,
+    "to": 938.0,
+    "delta": 332.0,
+    "limit": 200.0,
+    "median_before_30m": 949.5,
+    "median_after_30m": 841.0,
+    "count": 22,
+    "max_abs_delta": 967.0
+   }
+  },
+  {
+   "device": "soil_a",
+   "kind": "step",
+   "metric": "soil_raw",
+   "start": "2026-09-11T14:49:31+09:00",
+   "end": "2026-09-11T15:59:43+09:00",
+   "evidence": {
+    "from": 741.0,
+    "to": 1000.0,
+    "delta": 259.0,
+    "limit": 200.0,
+    "median_before_30m": 824.5,
+    "median_after_30m": 936.0,
+    "count": 25,
+    "max_abs_delta": 980.0
+   }
+  },
+  {
+   "device": "soil_a",
+   "kind": "step",
+   "metric": "soil_raw",
+   "start": "2026-09-11T16:44:28+09:00",
+   "end": "2026-09-11T20:16:04+09:00",
+   "evidence": {
+    "from": 995.0,
+    "to": 84.0,
+    "delta": -911.0,
+    "limit": 200.0,
+    "median_before_30m": 977.5,
+    "median_after_30m": 801.0,
+    "count": 67,
+    "max_abs_delta": 1002.0
+   }
+  }
+ ]
+}

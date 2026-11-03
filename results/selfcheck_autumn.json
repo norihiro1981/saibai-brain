@@ -1,0 +1,99 @@
+{
+ "source": "autumn_2026-10-03_2026-10-30.csv",
+ "summary": {
+  "node_a/node_c:disagree:rh_pct": 3,
+  "soil_a:spike:soil_raw": 1,
+  "soil_a:step:soil_raw": 2
+ },
+ "findings": [
+  {
+   "device": "node_a/node_c",
+   "kind": "disagree",
+   "metric": "rh_pct",
+   "start": "2026-10-04T04:55:00+09:00",
+   "end": "2026-10-04T06:30:00+09:00",
+   "evidence": {
+    "diff_at_worst": 21.38,
+    "usual_diff": 10.05,
+    "worst_at": "2026-10-04T06:15:00+09:00",
+    "limit": 10.0,
+    "minutes": 95
+   }
+  },
+  {
+   "device": "node_a/node_c",
+   "kind": "disagree",
+   "metric": "rh_pct",
+   "start": "2026-10-09T02:40:00+09:00",
+   "end": "2026-10-09T03:30:00+09:00",
+   "evidence": {
+    "diff_at_worst": 20.98,
+    "usual_diff": 9.95,
+    "worst_at": "2026-10-09T02:50:00+09:00",
+    "limit": 10.0,
+    "minutes": 50
+   }
+  },
+  {
+   "device": "node_a/node_c",
+   "kind": "disagree",
+   "metric": "rh_pct",
+   "start": "2026-10-13T15:00:00+09:00",
+   "end": "2026-10-13T17:00:00+09:00",
+   "evidence": {
+    "diff_at_worst": 24.91,
+    "usual_diff": 12.02,
+    "worst_at": "2026-10-13T15:45:00+09:00",
+    "limit": 10.0,
+    "minutes": 120
+   }
+  },
+  {
+   "device": "soil_a",
+   "kind": "step",
+   "metric": "soil_raw",
+   "start": "2026-10-14T02:33:11+09:00",
+   "end": "2026-10-14T02:34:12+09:00",
+   "evidence": {
+    "from": 635.0,
+    "to": 936.0,
+    "delta": 301.0,
+    "limit": 200.0,
+    "median_before_30m": 637.5,
+    "median_after_30m": 915.0
+   }
+  },
+  {
+   "device": "soil_a",
+   "kind": "step",
+   "metric": "soil_raw",
+   "start": "2026-10-15T04:18:40+09:00",
+   "end": "2026-10-15T04:19:41+09:00",
+   "evidence": {
+    "from": 730.0,
+    "to": 991.0,
+    "delta": 261.0,
+    "limit": 200.0,
+    "median_before_30m": 750.0,
+    "median_after_30m": 938.0
+   }
+  },
+  {
+   "device": "soil_a",
+   "kind": "spike",
+   "metric": "soil_raw",
+   "start": "2026-10-28T00:16:05+09:00",
+   "end": "2026-10-28T00:32:22+09:00",
+   "evidence": {
+    "from": 927.0,
+    "to": 408.0,
+    "delta": -519.0,
+    "limit": 200.0,
+    "median_before_30m": 840.0,
+    "median_after_30m": 869.0,
+    "count": 5,
+    "max_abs_delta": 519.0
+   }
+  }
+ ]
+}
