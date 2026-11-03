@@ -262,12 +262,78 @@ EXPERT_SYSTEM = (
 )
 
 
+# 役ごとのモデルと effort（設計書 §4）。指定しないと Sonnet 5.5 は high が既定で高くつく（nori・11/4）。
+# effort は model の中に書く（手引き managed-agents-core「Effort on the agent model」）。
+# 落とし穴：セッションごとに model を差し替える（agent_with_overrides）時は、差し替えの model にも effort を書く
+# （差し替えは model を丸ごと置き換える＝書かないとその model の既定の effort で走る）。
+MODELS = {
+    "control": {"id": "claude-opus-5-5", "effort": "medium"},  # 計画を決める
+    "analyst": {"id": "claude-sonnet-5-5", "effort": "medium"},  # 振り返り（計算は作業場の Python）
+    "expert": {"id": "claude-haiku-5-5", "effort": "medium"},  # 知識を読むだけ
+}
+
+
+def sync_models(client, ids: dict) -> list[str]:
+    """作ってあるエージェントのモデルと effort を MODELS にそろえる（違う物だけ更新＝新しい版になる）。"""
+    out = []
+    for role, want in MODELS.items():
+        a = client.beta.agents.retrieve(ids[role])
+        got = a.model.model_dump(mode="json") if hasattr(a.model, "model_dump") else {"id": a.model}
+        eff = got.get("effort")
+        eff = eff.get("type") if isinstance(eff, dict) else eff
+        if got.get("id") == want["id"] and eff == want["effort"]:
+            out.append(f"{role}：そのまま（{want['id']}・{want['effort']}・版 {a.version}）")
+            continue
+        u = client.beta.agents.update(ids[role], version=a.version, model=want)
+        out.append(
+            f"{role}：{got.get('id')}・{eff} → {want['id']}・{want['effort']}（版 {a.version}→{u.version}）"
+        )
+    return out + repin(client, ids)
+
+
+def repin(client, ids: dict) -> list[str]:
+    """版の留め直し。名簿（制御役→専門家）と定時の起動（→分析役）は、保存した時の版に留まる
+    （11/4 に確かめた：エージェントを更新しても、定時の起動は分析役の版 1・名簿は専門家の版 1 のままだった）。"""
+    out = []
+    expert = client.beta.agents.retrieve(ids["expert"]).version
+    c = client.beta.agents.retrieve(ids["control"])
+    pinned = c.multiagent.model_dump(mode="json")["subagents"]["predefined_agents"][0].get(
+        "version"
+    )
+    if pinned != expert:
+        u = client.beta.agents.update(
+            ids["control"],
+            version=c.version,
+            multiagent={
+                "type": "multiagent_20261001",
+                "subagents": {
+                    "type": "enabled",
+                    "predefined_agents": [
+                        {"type": "agent", "id": ids["expert"], "version": expert}
+                    ],
+                    "inline_agents": {"type": "disabled"},
+                },
+                "workflows": {"type": "disabled"},
+            },
+        )
+        out.append(f"名簿：専門家の版 {pinned}→{expert}（制御役の版 {c.version}→{u.version}）")
+    if dep := ids.get("deployment"):
+        analyst = client.beta.agents.retrieve(ids["analyst"]).version
+        d = client.beta.deployments.retrieve(dep)
+        if d.agent.version != analyst:
+            client.beta.deployments.update(
+                dep, agent={"type": "agent", "id": ids["analyst"], "version": analyst}
+            )
+            out.append(f"定時の起動：分析役の版 {d.agent.version}→{analyst}")
+    return out
+
+
 def ensure_agents(client, ids: dict) -> dict:
     if "analyst" not in ids:
         a = client.beta.agents.create(
             name="記録の分析役",
             description="置き場の温湿度と操作の記録を Python で読み、操作の効き目を数値と時刻つきで出し、経験を書き直す。",
-            model="claude-sonnet-5-5",
+            model=MODELS["analyst"],
             system=ANALYST_SYSTEM,
             tools=[toolset(["bash", "read", "write", "edit", "glob", "grep"])],
         )
@@ -280,7 +346,7 @@ def ensure_agents(client, ids: dict) -> dict:
                 "コーヒーの幼木の栽培の知識を、/mnt/memory/ の知識の置き場から読んで答える。"
                 "聞きたいこと・読む場所・返す形を書いて渡すこと。"
             ),
-            model="claude-sonnet-5-5",
+            model=MODELS["expert"],
             system=EXPERT_SYSTEM,
             tools=[toolset(["read", "glob", "grep"])],
         )
@@ -290,7 +356,7 @@ def ensure_agents(client, ids: dict) -> dict:
         c = client.beta.agents.create(
             name="制御役",
             description="栽培室の加湿器の運転を、経験と今の値から決める取りまとめ役（オート）。",
-            model="claude-opus-5-5",
+            model=MODELS["control"],
             system=CONTROL_SYSTEM,
             tools=[toolset(["bash", "read", "glob", "grep"]), PLAN_TOOL],
             multiagent={
@@ -309,7 +375,8 @@ def ensure_agents(client, ids: dict) -> dict:
 
 
 def main() -> None:
-    """uv run saibai-agents setup：環境・置き場 4 つ・エージェント 3 体を作る（あれば使い回す）。"""
+    """uv run saibai-agents setup：環境・置き場 4 つ・エージェント 3 体を作る（あれば使い回す）。
+    uv run saibai-agents models：作ってあるエージェントのモデルと effort を MODELS にそろえる。"""
     import sys
 
     import anthropic
@@ -318,8 +385,11 @@ def main() -> None:
     load_dotenv(ROOT / ".env")
     client = anthropic.Anthropic()
     ids = load_ids()
-    if (sys.argv[1:] or ["setup"])[0] == "setup":
+    cmd = (sys.argv[1:] or ["setup"])[0]
+    if cmd == "setup":
         ensure_env(client, ids)
         ensure_stores(client, ids)
         ensure_agents(client, ids)
         print(json.dumps({k: v for k, v in ids.items() if not k.startswith("probe")}, indent=2))
+    elif cmd == "models":  # uv run saibai-agents models：役ごとのモデルと effort をそろえる
+        print("\n".join(sync_models(client, ids)))
