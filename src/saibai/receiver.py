@@ -166,6 +166,24 @@ def make_handler(log: MeterLog, ctrl: Controller | None = None):
     return Handler
 
 
+def start_memory_sync(run_dir: Path):
+    """記憶の置き場（run/agents.json に ID があれば）へ、温湿度を 5 分ごと・操作を 1 件ずつ写す。"""
+    ids_file = run_dir / "agents.json"
+    if not ids_file.exists():
+        return None
+    ids = json.loads(ids_file.read_text())
+    if "meter" not in ids or "actions" not in ids:
+        return None
+    import anthropic
+
+    from saibai.memory_sync import MemorySync, start_background
+
+    ms = MemorySync(anthropic.Anthropic(), ids["meter"], ids["actions"], run_dir, now_jst)
+    stop, on_action = start_background(ms)
+    print(f"置き場へ写す：温湿度＝5 分ごと（{ids['meter']}）・操作＝1 件ずつ（{ids['actions']}）")
+    return ms, on_action
+
+
 def main() -> None:
     load_dotenv(ROOT / ".env")
     client = SwitchBotClient(os.environ["SWITCHBOT_TOKEN"], os.environ["SWITCHBOT_SECRET"])
@@ -186,6 +204,9 @@ def main() -> None:
 
         schedule = DeploymentSchedule(anthropic.Anthropic(), dep)
     ctrl = Controller(Guard(REAL), plug, schedule, run_dir, now_jst)
+    sync = start_memory_sync(run_dir)
+    if sync:
+        ctrl.on_action.append(sync[1])
     ctrl.start()
 
     server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(log, ctrl))
