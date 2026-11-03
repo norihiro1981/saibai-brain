@@ -363,7 +363,7 @@ def ensure_deployment(client, ids: dict, save) -> dict:
             {"type": "user.message", "content": [{"type": "text", "text": REVIEW_PROMPT}]}
         ],
         schedule={"type": "cron", "expression": "0 */3 * * *", "timezone": "Asia/Tokyo"},
-        budget={"type": "limit", "max_list_cost": {"amount": "100", "currency": "USD"}},
+        budget={"type": "limit", "max_list_cost": {"amount": "50", "currency": "USD"}},
     )
     ids["deployment"] = d.id
     save(ids)
