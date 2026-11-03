@@ -198,7 +198,9 @@ def main() -> None:
         rec = read_meter(client, meter_id)
         log.add(rec)
         if rec["ok"]:
-            ctrl.observe(datetime.fromisoformat(rec["read_at"]), float(rec["rh_pct"]))
+            ctrl.observe(
+                datetime.fromisoformat(rec["read_at"]), float(rec["rh_pct"]), rec.get("temp_c")
+            )
         # 判断は 30 秒ごと（守りの層の 1 tick＝60 秒より短い）・プラグの点検は毎分
         ctrl.tick(check_plug=n % 2 == 0)
         n += 1

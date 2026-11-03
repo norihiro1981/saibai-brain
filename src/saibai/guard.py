@@ -29,12 +29,18 @@ class Limits:
     min_gap: timedelta = timedelta(minutes=30)
     # 5 分読めていない値は今の部屋を表さない
     stale_after: timedelta = timedelta(minutes=5)
-    # 人のいる部屋で湿度が 15 分まったく動かないのは、センサーかクラウドが止まった疑い
-    stuck_after: timedelta = timedelta(minutes=15)
+    # 温度と湿度がそろって 90 分まったく動かないのは、センサーかクラウドが止まった疑い
+    # （クラウドの湿度は整数で、工場の夜は温度も湿度も 45 分そのままだった（11/4）＝その倍）
+    stuck_after: timedelta = timedelta(minutes=90)
+    # 加湿器は 30 分で +12〜16 pt（11/3）＝15 分で 1 pt も上がらなければ、効いていないか値が止まっている
+    no_rise_after: timedelta = timedelta(minutes=15)
+    no_rise_pt: float = 1.0
     # 1 分で 10 pt は加湿器でも出ない跳び＝センサーの不具合の疑い
     jump_pt: float = 10.0
     # 跳びとみなす隣り合う読みの間（読みは 30〜61 秒ごと・1 回抜けても拾う）
     jump_within: timedelta = timedelta(minutes=2)
+    # 跳びを疑い続ける間
+    jump_recent: timedelta = timedelta(minutes=15)
     # 計画を出す側（定時の起動）が止まったら、古い計画で動き続けない
     plan_timeout: timedelta = timedelta(hours=3)
     # 判断の間（受け手は毎分判断する）
@@ -53,6 +59,7 @@ REAL = Limits(max_continuous=timedelta(minutes=60), max_daily=timedelta(minutes=
 class Reading:
     at: datetime
     rh: float
+    temp: float | None = None
 
 
 @dataclass(frozen=True)
@@ -111,7 +118,9 @@ class Guard:
     runs: list[Run] = field(default_factory=list)
     last_plan_at: datetime | None = None
     manual_stop: bool = False
-    readings: deque = field(default_factory=lambda: deque(maxlen=120))
+    rh_at_on: float | None = None  # 入れた時の湿度（効かない運転を見るため）
+    # 30 秒ごとの読みで 200 分＝止まりの線（90 分）より長く持つ
+    readings: deque = field(default_factory=lambda: deque(maxlen=400))
 
     # ---- センサー ----
     def observe(self, r: Reading) -> None:
@@ -131,19 +140,26 @@ class Guard:
             out.append(
                 f"最新の湿度が {age.total_seconds() / 60:.0f} 分古い（{L.stale_after.seconds // 60} 分まで）"
             )
-        # 値が最後に変わった時刻。手元の記録の中で一度も変わっていなければ最初の読みの時刻
-        rs = list(self.readings)
+        # 温度と湿度の組が最後に変わった時刻。手元の記録の中で一度も変わっていなければ最初の読みの時刻
+        rs = self.readings
+        n = len(rs)
+        # 後ろから、温度と湿度の組が同じ値の続く所までさかのぼる（記録の中で一度も変わらなければ最初の読み）
         changed_at = rs[0].at
-        for a, b in zip(rs, rs[1:], strict=False):
-            if a.rh != b.rh:
-                changed_at = b.at
+        for i in range(n - 1, 0, -1):
+            if (rs[i - 1].rh, rs[i - 1].temp) != (rs[i].rh, rs[i].temp):
+                changed_at = rs[i].at
+                break
         if last.at - changed_at >= L.stuck_after:
-            out.append(f"湿度が {changed_at:%H:%M} から {last.rh}% のまま変わらない")
-        for a, b in zip(rs, rs[1:], strict=False):
-            if now - b.at <= L.stuck_after and b.at - a.at <= L.jump_within:
-                if abs(b.rh - a.rh) >= L.jump_pt:
-                    out.append(f"湿度が {a.at:%H:%M}→{b.at:%H:%M} で {a.rh}→{b.rh}% と跳んだ")
-                    break
+            t = "" if last.temp is None else f"・{last.temp}℃"
+            out.append(f"温度と湿度が {changed_at:%H:%M} から {last.rh}%{t} のまま変わらない")
+        # 跳びは新しい方から、jump_recent の内だけを見る
+        for i in range(n - 1, 0, -1):
+            a, b = rs[i - 1], rs[i]
+            if now - b.at > L.jump_recent:
+                break
+            if b.at - a.at <= L.jump_within and abs(b.rh - a.rh) >= L.jump_pt:
+                out.append(f"湿度が {a.at:%H:%M}→{b.at:%H:%M} で {a.rh}→{b.rh}% と跳んだ")
+                break
         return out
 
     def current_rh(self) -> float | None:
@@ -277,6 +293,13 @@ class Guard:
                     f"続けて {cont // MIN} 分動いた（続けて {L.max_continuous // MIN} 分まで）"
                 )
                 drop_run = True
+            rise_ok = rh is None or self.rh_at_on is None or rh - self.rh_at_on >= L.no_rise_pt
+            if cont >= L.no_rise_after and not rise_ok:
+                off.append(
+                    f"入れて {cont // MIN} 分たつのに湿度が {self.rh_at_on}→{rh}%"
+                    f"（{L.no_rise_pt:.0f} pt も上がらない）"
+                )
+                drop_run = True
         else:
             if rh is not None and rh >= L.no_start_rh:
                 off.append(f"湿度が {rh}%（{L.no_start_rh:.0f}% 以上では入れない）")
@@ -288,7 +311,7 @@ class Guard:
         want = not off
         changed = want != self.on
         if changed and want:
-            self.on, self.on_since = True, now
+            self.on, self.on_since, self.rh_at_on = True, now, rh
         elif changed:
             self.intervals.append((self.on_since, now))
             self.on, self.on_since, self.last_off = False, None, now

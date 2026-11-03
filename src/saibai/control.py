@@ -157,9 +157,9 @@ class Controller:
         with self._lock:
             self._apply(False, "起動した時は切から")
 
-    def observe(self, read_at: datetime, rh: float) -> None:
+    def observe(self, read_at: datetime, rh: float, temp: float | None = None) -> None:
         with self._lock:
-            self.guard.observe(Reading(read_at, rh))
+            self.guard.observe(Reading(read_at, rh, temp))
 
     def tick(self, check_plug: bool) -> None:
         with self._lock:

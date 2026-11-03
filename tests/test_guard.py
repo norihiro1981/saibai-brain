@@ -21,11 +21,14 @@ def fresh_guard(limits: Limits = REPLAY, rh: float = 60.0, now: datetime = T0) -
 
 
 def tick_until(g: Guard, start: datetime, minutes: int, rh: float = 60.0):
+    """毎分読んで判断する。入っている間は加湿器が効いて湿度が 0.3 pt/分 上がる。"""
     log = []
     for i in range(minutes + 1):
         t = start + timedelta(minutes=i)
-        g.observe(Reading(t, rh + (i % 2) * 0.5))
+        g.observe(Reading(t, round(rh + (i % 2) * 0.1, 1)))
         log.append((t, g.decide(t)))
+        if g.on:
+            rh += 0.3
     return log
 
 
@@ -105,8 +108,8 @@ def test_stale_reading_turns_off_and_blocks():
 
 def test_stuck_sensor_rejects_plan_based_on_humidity():
     g = Guard(REPLAY)
-    for i in range(20):
-        g.observe(Reading(T0 - timedelta(minutes=19 - i), 62.0))  # 19 分同じ値
+    for i in range(95):
+        g.observe(Reading(T0 - timedelta(minutes=94 - i), 62.0, 15.3))  # 94 分そろって同じ値
     v = g.submit_plan([Run(T0 + timedelta(minutes=5), 20)], EV_RH, T0)
     assert not v.ok and "変わらない" in v.text()
     assert not g.decide(T0).on
@@ -266,3 +269,26 @@ def test_random_plans_never_break_limits(limits):
                 if not was_on:
                     assert rh < limits.no_start_rh, (seed, t, rh)
     assert total_on > 50  # ちゃんと入る場面もあった（何もしない守りではない）
+
+
+def test_cloud_like_flat_night_is_not_stuck():
+    """クラウドの湿度は整数＝夜は 85 分同じでも、温度が 45 分以内に動けば止まりとみなさない（11/4 の工場）。"""
+    g = Guard(REAL)
+    for i in range(170):  # 30 秒ごと 85 分
+        g.observe(Reading(T0 - timedelta(seconds=30 * (169 - i)), 67.0, 15.6 if i < 80 else 15.3))
+    assert g.sensor_problems(T0) == []
+    assert g.submit_plan([Run(T0, 10)], EV_RH, T0).ok
+
+
+def test_no_rise_while_on_turns_off():
+    """入れて 15 分たっても湿度が 1 pt も上がらなければ切る（プラグの先が空・値が止まった時）。"""
+    g = fresh_guard(REAL)
+    assert g.submit_plan([Run(T0, 60)], EV, T0).ok
+    log = []
+    for i in range(30):
+        t = T0 + timedelta(minutes=i)
+        g.observe(Reading(t, 60.0 + (i % 2) * 0.5, 20.0 + i * 0.01))
+        log.append(g.decide(t))
+    on = [d.on for d in log]
+    assert on[:15] == [True] * 15 and not any(on[15:])
+    assert any("上がらない" in r for r in log[15].reasons)

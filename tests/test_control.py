@@ -118,11 +118,11 @@ def test_http_routes_go_through_controller(tmp_path):
 
 
 def test_switch_says_why_when_sensor_is_stuck(tmp_path):
-    """工場の夜：クラウドの湿度が整数のまま 15 分以上変わらない時、「受け付けた」と返して入らない、をしない。"""
+    """値が止まった疑いの時、「受け付けた」と返して入らない、をしない。"""
     ctrl, plug, clock = make(tmp_path)
-    for _ in range(16):
+    for _ in range(91):  # 温度も湿度も 91 分そろって同じ
         clock.t += timedelta(minutes=1)
-        ctrl.observe(clock.t, 67.0)
+        ctrl.observe(clock.t, 67.0, 15.3)
         ctrl.tick(check_plug=True)
     r = ctrl.set_humidifier(True, 1)
     assert r["ok"] is False and plug.on is False
