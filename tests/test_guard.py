@@ -1,6 +1,7 @@
 """守りの層のテスト。芯は「どんな計画が来ても上限を越えない」をランダムに大量に流して確かめるもの。"""
 
 import random
+from dataclasses import replace
 from datetime import datetime, timedelta
 
 import pytest
@@ -92,9 +93,18 @@ def test_daily_limit_rejected_at_submit():
 
 
 def test_gap_between_runs():
-    g = fresh_guard()
+    # 本番に戻した時の線（30 分）で確かめる
+    g = fresh_guard(replace(REPLAY, min_gap=timedelta(minutes=30)))
     v = g.submit_plan([Run(T0, 30), Run(T0 + timedelta(minutes=40), 30)], EV, T0)
     assert not v.ok and "間が 30 分に足りない" in v.text()
+
+
+def test_gap_from_config_is_one_minute():
+    """v0.6：入と入の間は設定ファイルで 1 分（連打でばたつかない下限）。"""
+    assert REAL.min_gap == REPLAY.min_gap == timedelta(minutes=1)
+    g = fresh_guard()
+    assert not g.submit_plan([Run(T0, 30), Run(T0 + timedelta(seconds=30 * 61), 30)], EV, T0).ok
+    assert g.submit_plan([Run(T0, 30), Run(T0 + timedelta(minutes=31), 30)], EV, T0).ok
 
 
 def test_stale_reading_turns_off_and_blocks():

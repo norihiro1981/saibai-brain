@@ -4,6 +4,8 @@
 #   sh scripts/install_receiver_agent.sh switchbot   本物のプラグで入れて起動する
 #   sh scripts/install_receiver_agent.sh remove      止めて外す
 # ログインすると起動し、落ちたら起こし直す（受け手は起動するたびにプラグを「切」から始める）。
+# caffeinate -s で包む＝電源につないでいる間は Mac が眠らない（眠ると記録が抜け、取り戻せない）。
+# 蓋を閉じても眠らせない（sudo pmset -a disablesleep 1）は人の手で。
 # 本物のプラグで常駐させるのは、プラグの先が空か電気スタンドの時だけ（設計書 §5：人が居ない時は加湿器をつながない）。
 set -eu
 
@@ -34,6 +36,7 @@ cat > "$PLIST" <<EOF
   <key>Label</key><string>$LABEL</string>
   <key>ProgramArguments</key>
   <array>
+    <string>/usr/bin/caffeinate</string><string>-s</string>
     <string>$UV</string><string>--directory</string><string>$REPO</string>
     <string>run</string><string>saibai-receiver</string>
   </array>

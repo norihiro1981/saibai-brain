@@ -13,46 +13,61 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from saibai import config
+
 JST = ZoneInfo("Asia/Tokyo")
 MIN = timedelta(minutes=1)
 
 
 @dataclass(frozen=True)
 class Limits:
+    """守りの層の線。値と理由は config/saibai.toml の [guard] に書く（ここに数を置かない）。"""
+
     max_continuous: timedelta
     max_daily: timedelta
-    # 75% 以上から足すと止める線（85%）まですぐ届き、結露と過湿の恐れが大きい
-    no_start_rh: float = 75.0
-    # 85% は葉や鉢の表面の結露と病気の恐れが出る線＝計画の残りに関わらず切る
-    stop_rh: float = 85.0
-    # 加湿器を入れて 30 分で湿度が +12〜16 pt 動く（11/3）＝効き目を見る前に次を入れない
-    min_gap: timedelta = timedelta(minutes=30)
-    # 5 分読めていない値は今の部屋を表さない
-    stale_after: timedelta = timedelta(minutes=5)
-    # 温度と湿度がそろって 90 分まったく動かないのは、センサーかクラウドが止まった疑い
-    # （クラウドの湿度は整数で、工場の夜は温度も湿度も 45 分そのままだった（11/4）＝その倍）
-    stuck_after: timedelta = timedelta(minutes=90)
-    # 加湿器は 30 分で +12〜16 pt（11/3）＝15 分で 1 pt も上がらなければ、効いていないか値が止まっている
-    no_rise_after: timedelta = timedelta(minutes=15)
-    no_rise_pt: float = 1.0
-    # 1 分で 10 pt は加湿器でも出ない跳び＝センサーの不具合の疑い
-    jump_pt: float = 10.0
-    # 跳びとみなす隣り合う読みの間（読みは 30〜61 秒ごと・1 回抜けても拾う）
-    jump_within: timedelta = timedelta(minutes=2)
-    # 跳びを疑い続ける間
-    jump_recent: timedelta = timedelta(minutes=15)
-    # 計画を出す側（定時の起動）が止まったら、古い計画で動き続けない
-    plan_timeout: timedelta = timedelta(hours=3)
-    # 判断の間（受け手は毎分判断する）
-    tick: timedelta = timedelta(minutes=1)
-    # これより先の計画は受けない（毎朝の計画で 1 日分あれば足りる）
-    horizon: timedelta = timedelta(hours=36)
+    no_start_rh: float
+    stop_rh: float
+    min_gap: timedelta
+    stale_after: timedelta
+    stuck_after: timedelta
+    no_rise_after: timedelta
+    no_rise_pt: float
+    jump_pt: float
+    jump_within: timedelta
+    jump_recent: timedelta
+    plan_timeout: timedelta
+    tick: timedelta
+    horizon: timedelta
+
+
+def limits_from_config(kind: str, cfg: dict | None = None) -> Limits:
+    """kind＝"real"（本物の実機）か "replay"（再生）。"""
+    g = (cfg or config.load())["guard"]
+    m = lambda k: timedelta(minutes=g[k])  # noqa: E731
+    h = lambda k: timedelta(hours=g[k])  # noqa: E731
+    return Limits(
+        max_continuous=timedelta(minutes=g[kind]["max_continuous_min"]),
+        max_daily=timedelta(minutes=g[kind]["max_daily_min"]),
+        no_start_rh=float(g["no_start_rh"]),
+        stop_rh=float(g["stop_rh"]),
+        min_gap=m("min_gap_min"),
+        stale_after=m("stale_after_min"),
+        stuck_after=m("stuck_after_min"),
+        no_rise_after=m("no_rise_after_min"),
+        no_rise_pt=float(g["no_rise_pt"]),
+        jump_pt=float(g["jump_pt"]),
+        jump_within=m("jump_within_min"),
+        jump_recent=m("jump_recent_min"),
+        plan_timeout=h("plan_timeout_h"),
+        tick=m("tick_min"),
+        horizon=h("horizon_h"),
+    )
 
 
 # 再生（模擬の栽培室）の線
-REPLAY = Limits(max_continuous=timedelta(minutes=180), max_daily=timedelta(minutes=360))
+REPLAY = limits_from_config("replay")
 # 本物の実機の線（人が付く日）＝再生より短く
-REAL = Limits(max_continuous=timedelta(minutes=60), max_daily=timedelta(minutes=120))
+REAL = limits_from_config("real")
 
 
 @dataclass(frozen=True)
@@ -66,6 +81,7 @@ class Reading:
 class Run:
     start: datetime
     minutes: int
+    source: str = "オート"  # 誰が出したか（手動／定時／オート）＝操作の記録の「誰が」
 
     @property
     def end(self) -> datetime:
@@ -88,6 +104,10 @@ class Decision:
     on: bool
     changed: bool
     reasons: list[str]  # 切にした（入れなかった）理由。入の時は空
+    source: str = (
+        ""  # 変わった時の「誰が」：入＝その運転を出した人・予定どおりの切＝同じ・ほかの切＝守りの層
+    )
+    minutes: int | None = None  # 入にした時、その運転の予定の分
 
 
 def jst_day(t: datetime) -> date:
@@ -119,6 +139,7 @@ class Guard:
     last_plan_at: datetime | None = None
     manual_stop: bool = False
     rh_at_on: float | None = None  # 入れた時の湿度（効かない運転を見るため）
+    on_source: str = ""  # 今の入を出した人
     # 30 秒ごとの読みで 200 分＝止まりの線（90 分）より長く持つ
     readings: deque = field(default_factory=lambda: deque(maxlen=400))
 
@@ -172,6 +193,13 @@ class Guard:
         if self.on and self.on_since:
             total += overlap(self.on_since, now, d0, d1)
         return total
+
+    def restore(
+        self, intervals: list[tuple[datetime, datetime]], last_off: datetime | None
+    ) -> None:
+        """起こし直した時、記録から読み戻した帳簿（動いた区間・最後に切った時刻）を入れる。"""
+        self.intervals = list(intervals)
+        self.last_off = last_off
 
     def _prune(self, now: datetime) -> None:
         keep_from = now - timedelta(days=2)
@@ -310,12 +338,17 @@ class Guard:
 
         want = not off
         changed = want != self.on
+        source, minutes = "", None
         if changed and want:
             self.on, self.on_since, self.rh_at_on = True, now, rh
+            self.on_source = source = run.source
+            minutes = run.minutes
         elif changed:
             self.intervals.append((self.on_since, now))
             self.on, self.on_since, self.last_off = False, None, now
-        return Decision(self.on, changed, off)
+            # 予定の分が終わっただけなら、その運転を出した人の切。ほかの理由なら守りの層の切
+            source = self.on_source if off == ["今は計画の運転の時間ではない"] else "守りの層"
+        return Decision(self.on, changed, off, source, minutes)
 
     def snapshot(self, now: datetime) -> dict:
         return {
@@ -325,7 +358,10 @@ class Guard:
             "used_today_min": round(self.used_on(jst_day(now), now) / MIN, 1),
             "max_daily_min": self.limits.max_daily // MIN,
             "max_continuous_min": self.limits.max_continuous // MIN,
-            "runs": [{"start": r.start.isoformat(), "minutes": r.minutes} for r in self.runs],
+            "runs": [
+                {"start": r.start.isoformat(), "minutes": r.minutes, "source": r.source}
+                for r in self.runs
+            ],
             "last_plan_at": self.last_plan_at.isoformat() if self.last_plan_at else None,
             "sensor_problems": self.sensor_problems(now),
         }

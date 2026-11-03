@@ -10,19 +10,21 @@ import json
 import os
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
+from saibai import config
 from saibai.control import Controller, DeploymentSchedule, DummyPlug, NoSchedule, SwitchBotPlug
 from saibai.guard import REAL, Guard
 from saibai.switchbot import SwitchBotClient
+from saibai.vpd import vpd_kpa
 
 JST = ZoneInfo("Asia/Tokyo")
-READ_EVERY_S = 30  # 1 日 2,880 回＝上限 1 万回の内（設計書 §8）
+READ_EVERY_S = config.load()["receiver"]["read_every_s"]
 DEFAULT_PORT = 8765
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -68,6 +70,7 @@ class MeterLog:
                 m = {
                     "temp_c": self.latest["temp_c"],
                     "rh_pct": self.latest["rh_pct"],
+                    "vpd_kpa": self.latest.get("vpd_kpa"),
                     "battery": self.latest.get("battery"),
                     "read_at": self.latest["read_at"],
                     "age_s": round((now - read_at).total_seconds(), 1),
@@ -108,6 +111,8 @@ def read_meter(client: SwitchBotClient, meter_id: str) -> dict:
         "rh_pct": b.get("humidity"),
         "battery": b.get("battery"),
     }
+    if ok and rec["temp_c"] is not None:
+        rec["vpd_kpa"] = vpd_kpa(float(rec["temp_c"]), float(rec["rh_pct"]))
     if not ok:
         rec["error"] = r.message or "値が返らなかった"
         rec["body_keys"] = sorted(b)  # 宿題 ①：ハブを抜いた時に何が返るかを残す
@@ -192,9 +197,15 @@ def main() -> None:
         f"プラグ＝{plug.kind}（起動したので切にした）・守りの層＝実機の線（続けて 60 分・1 日 120 分）"
     )
 
+    gap_after = timedelta(minutes=config.load()["receiver"]["gap_after_min"])
+    prev = now_jst()
     n = 0
     while True:
         t0 = time.monotonic()
+        # Mac が眠った・止まっていた間は読みが抜ける（クラウドに過去の値の口は無い）＝穴として残す
+        if (t := now_jst()) - prev > gap_after:
+            ctrl.note_gap(prev, t)
+        prev = t
         rec = read_meter(client, meter_id)
         log.add(rec)
         if rec["ok"]:
