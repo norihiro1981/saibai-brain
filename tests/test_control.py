@@ -115,3 +115,27 @@ def test_http_routes_go_through_controller(tmp_path):
         assert plug.on is False and httpx.get(base + "/status").json()["guard"]["manual_stop"]
     finally:
         httpd.shutdown()
+
+
+def test_switch_says_why_when_sensor_is_stuck(tmp_path):
+    """工場の夜：クラウドの湿度が整数のまま 15 分以上変わらない時、「受け付けた」と返して入らない、をしない。"""
+    ctrl, plug, clock = make(tmp_path)
+    for _ in range(16):
+        clock.t += timedelta(minutes=1)
+        ctrl.observe(clock.t, 67.0)
+        ctrl.tick(check_plug=True)
+    r = ctrl.set_humidifier(True, 1)
+    assert r["ok"] is False and plug.on is False
+    assert "センサーが疑わしい" in r["text"] and "変わらない" in r["text"]
+
+
+def test_switch_on_off_on_after_gap(tmp_path):
+    """入→切→（30 分あけて）入、が入ること。"""
+    ctrl, plug, clock = make(tmp_path)
+    assert ctrl.set_humidifier(True, 30)["ok"] and plug.on
+    clock.step(ctrl, 1)
+    ctrl.set_humidifier(False, 0)
+    assert plug.on is False
+    clock.step(ctrl, 30)
+    r = ctrl.set_humidifier(True, 30)
+    assert r["ok"] and plug.on, r

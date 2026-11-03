@@ -205,9 +205,12 @@ class Controller:
                     }
                 ]
                 v = self.submit([Run(now, minutes)], ev, "画面のスイッチ")
+                text = v.text()
+                if v.ok and not self.guard.on:  # 受け付けても入らなかった時は、その理由まで返す
+                    text = "受け付けたが、今は入れない：" + "／".join(self.last_decision_reasons)
                 return {
-                    "ok": v.ok,
-                    "text": v.text(),
+                    "ok": v.ok and self.guard.on,
+                    "text": text,
                     "on": self.guard.on,
                     "reasons": self.last_decision_reasons,
                 }

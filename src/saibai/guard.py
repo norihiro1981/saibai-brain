@@ -213,8 +213,13 @@ class Guard:
                     f"{d:%m/%d} は使った {used // MIN} 分＋計画 {planned // MIN} 分が 1 日の上限 {L.max_daily // MIN} 分を越える"
                 )
         rh = self.current_rh()
-        if runs and runs[0].start <= now + L.tick and rh is not None and rh >= L.no_start_rh:
+        starts_now = bool(runs) and runs[0].start <= now + L.tick
+        if starts_now and rh is not None and rh >= L.no_start_rh:
             reasons.append(f"今の湿度が {rh}%（{L.no_start_rh:.0f}% 以上では入れない）")
+        # 今すぐ始める計画は、根拠が湿度でなくても、センサーが疑わしい間は decide が入れない
+        # ＝受け付けたと返して入らない、を起こさないよう、ここで断る
+        if starts_now and problems and not any(r.startswith("根拠の湿度") for r in reasons):
+            reasons.append("今はセンサーが疑わしいので入れない：" + "・".join(problems))
         if reasons:
             return Verdict(False, reasons)
         self.runs = runs

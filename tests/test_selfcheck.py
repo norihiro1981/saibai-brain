@@ -88,7 +88,9 @@ def test_four_minute_hole_is_not_a_gap():
 def test_disagreement_between_two_meters():
     df = normal_record()
     c = rows_of(df, "node_c")
-    df.loc[c[1500:1560], "rh_pct"] -= 14  # 1 時間だけ片方がずれる（段差としても拾われるが、ここでは食い違いを見る）
+    df.loc[c[1500:1560], "rh_pct"] -= (
+        14  # 1 時間だけ片方がずれる（段差としても拾われるが、ここでは食い違いを見る）
+    )
     got = kinds(check(df))
     assert ("node_a/node_c", "disagree", "rh_pct") in got
 
