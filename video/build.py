@@ -31,7 +31,7 @@ OUT = ROOT / "video" / "out"
 W, H = 1920, 1080
 ORDER = "⓪O①②③④⑤⑥⑦"  # O＝冒頭の実写の札
 AIVIS = "http://127.0.0.1:10101"
-VOICE_ID = 888753763  # まお・おちつき（ACML 1.0＝商用可・クレジット任意）
+VOICE_ID = 1937616896  # にせ（低めで落ち着いた講義調・ACML 1.0＝商用可・クレジット任意）
 LEAD, GAP = 0.5, 0.45  # 場面の頭の間・行と行の間
 TAIL = {"⓪": 1.6, "⑦": 4.0}  # 場面の後ろの間（ほかは 0.8）
 
@@ -789,17 +789,27 @@ def timeline(scenes, keys, args, use_aivis):
     return plan, voices, t0
 
 
-def narration(voices, total: float, out: Path) -> None:
+def narration(voices, total: float, out: Path, bgm: Path | None, bgm_db: float) -> None:
+    """声を時刻に置いて 1 本にし、BGM を声の下で下げて混ぜる（sidechaincompress）。"""
     ins, flt = [], []
     for i, (at, wav) in enumerate(voices):
         ins += ["-i", str(wav)]
         ms = int(at * 1000)
-        flt.append(f"[{i}]aresample=48000,adelay={ms}:all=1[a{i}]")
+        flt.append(f"[{i}]aresample=48000,aformat=channel_layouts=stereo,adelay={ms}:all=1[a{i}]")
     mix = "".join(f"[a{i}]" for i in range(len(voices)))
     flt.append(
         f"{mix}amix=inputs={len(voices)}:normalize=0,apad,atrim=0:{total:.3f},"
-        "loudnorm=I=-16:TP=-1.5:LRA=11[out]"
+        "loudnorm=I=-16:TP=-1.5:LRA=11" + ("[v]" if bgm else "[out]")
     )
+    if bgm:
+        n = len(voices)
+        ins += ["-i", str(bgm)]
+        flt.append("[v]asplit=2[v1][v2]")
+        flt.append(
+            f"[{n}]aresample=48000,atrim=0:{total:.3f},volume={bgm_db}dB[b];"
+            "[b][v2]sidechaincompress=threshold=0.03:ratio=6:attack=40:release=600:makeup=1[bd];"
+            "[v1][bd]amix=inputs=2:normalize=0,alimiter=limit=0.89[out]"
+        )
     ff(
         *ins,
         "-filter_complex",
@@ -825,7 +835,9 @@ def main() -> None:
     ap.add_argument("--stills", action="store_true", help="各行の終わりの絵だけ撮る")
     ap.add_argument("--fps", type=int, default=30)
     ap.add_argument("--voice", type=int, default=VOICE_ID, help="AivisSpeech の声（スタイル ID）")
-    ap.add_argument("--speed", type=float, default=1.1)
+    ap.add_argument("--speed", type=float, default=1.05)
+    ap.add_argument("--bgm-db", type=float, default=-6.0, help="BGM の大きさ（声の無い所・dB）")
+    ap.add_argument("--no-bgm", action="store_true")
     args = ap.parse_args()
     BUILD.mkdir(parents=True, exist_ok=True)
     OUT.mkdir(parents=True, exist_ok=True)
@@ -902,7 +914,16 @@ def main() -> None:
     enc.wait()
 
     audio = BUILD / "narration.m4a"
-    narration(voices, total, audio)
+    bgm = None
+    if not args.no_bgm:
+        bgm = BUILD / "bgm.wav"
+        marks = [t0 for k, _, _, t0 in plan if k != "O"]
+        subprocess.run(
+            ["uv", "run", "python", str(ROOT / "video" / "bgm.py"), f"{total:.3f}", str(bgm)]
+            + [f"{m:.3f}" for m in marks],
+            check=True,
+        )
+    narration(voices, total, audio, bgm, args.bgm_db)
     out = OUT / ("part.mp4" if args.only else "draft.mp4")
     ff("-i", str(video), "-i", str(audio), "-c:v", "copy", "-c:a", "copy", "-shortest", str(out))
     print("\n場面ごとの秒：", "・".join(f"{k} {d:.1f}" for k, _, d, _ in plan))
