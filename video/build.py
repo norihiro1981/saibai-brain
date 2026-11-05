@@ -519,7 +519,7 @@ def main() -> None:
             "",
             '<div style="position:absolute;inset:-60px -70px -190px -70px;background:#0b0e0c"></div>'
             '<div style="position:absolute;top:380px;width:100%;text-align:center;color:#e4ebe5;font-size:44px">'
-            f'冒頭：実写（門脇）約 45 秒<br><span style="font-size:28px;color:#98a79d">この試しでは {args.opening:g} 秒の札</span></div>',
+            f'冒頭：実写（作り手）約 45 秒<br><span style="font-size:28px;color:#98a79d">この試しでは {args.opening:g} 秒の札</span></div>',
         ),
         card,
     )
