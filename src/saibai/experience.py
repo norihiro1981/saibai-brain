@@ -27,19 +27,29 @@ def _near(s: pd.Series, t: pd.Timestamp) -> tuple[pd.Timestamp, float] | None:
     return None if best is None else (best[1], best[2])
 
 
-def effects(season: str) -> pd.DataFrame:
+def effects(season: str, before=None) -> pd.DataFrame:
+    """before（時刻）を渡すと、入れて 60 分の読みまでその時刻より前に収まる回だけ（再生の先読みの禁止）。
+    記録もその時刻より前の行しか見ない。"""
     env, act = season_files(season)
     df = load_readings(env)
+    if before is not None:
+        before = pd.Timestamp(before)
+        df = df[df.timestamp < before]
     a = df[df.device_id == "node_a"].set_index("timestamp").sort_index()
     vpd, temp, rh = a["vpd_kpa"].dropna(), a["temp_c"], a["rh_pct"]
     acts = load_actions(act)
     rows = []
+    cutoff = before
     for r in acts[acts.kind == "humidifier_on"].itertuples():
+        if cutoff is not None and r.start_jst + pd.Timedelta(minutes=max(AFTER)) >= cutoff:
+            continue
         before = _near(vpd, r.start_jst - pd.Timedelta(seconds=30))
         if before is None:
             continue
         minutes = (
-            None if pd.isna(r.end_jst) else int((r.end_jst - r.start_jst) / pd.Timedelta(minutes=1))
+            None
+            if pd.isna(r.end_jst) or (cutoff is not None and r.end_jst >= cutoff)
+            else int((r.end_jst - r.start_jst) / pd.Timedelta(minutes=1))
         )
         row = {
             "season": SEASON_JA[season],
@@ -66,15 +76,27 @@ def _d(v) -> str:
     return "—" if v is None or pd.isna(v) else f"{v:+.3f}"
 
 
-def seed_markdown() -> str:
+def seed_markdown(before=None) -> str:
+    """before を渡すと、その時刻より前の記録だけから作る（再生の経験の最初の版）。"""
     t = config.load()["target"]
     lo, hi = t["vpd_low_kpa"], t["vpd_high_kpa"]
-    e = pd.concat([effects("summer"), effects("autumn")], ignore_index=True)
+    parts = []
+    for s in ("summer", "autumn"):
+        if before is not None and season_files(s)[0].stem.split("_")[1] >= str(
+            pd.Timestamp(before).date()
+        ):
+            continue  # 区間が窓より後
+        parts.append(effects(s, before))
+    e = pd.concat(parts, ignore_index=True)
     lines = [
         "# 経験（加湿器の効き目）",
         "",
         f"- 狙いの VPD の帯：{lo}〜{hi} kPa（設定ファイル・知識の §1 から）",
-        "- 最後に振り返った時刻：（まだ。最初の版は夏と秋の作業の記録をコードで計算した物）",
+        (
+            "- 最後に振り返った時刻：（まだ。最初の版は夏と秋の作業の記録をコードで計算した物）"
+            if before is None
+            else f"- 最後に振り返った時刻：（まだ。最初の版は {pd.Timestamp(before):%m/%d %H:%M} より前の作業の記録をコードで計算した物）"
+        ),
         "- 決め方：入れる前の VPD と、入れて 15・30・60 分の VPD の差（node_a・前後 2 分以内の読み）。"
         "穴にかかる回は数えない。",
         "- **お手本ではない**：夏と秋は水のやりすぎを疑う期間。いつ入れたかは真似せず、効き目だけを見る。",

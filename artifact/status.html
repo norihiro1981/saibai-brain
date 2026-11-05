@@ -350,7 +350,9 @@ function renderControls(s) {
   else if (last && last.plans && last.plans.length) {
     const pl = last.plans[last.plans.length - 1];
     const reason = pl.input && pl.input.reason ? `（${pl.input.reason}）` : "";
-    aw.textContent = `最後の計画：${pl.text}${reason}`;
+    const person = pl.input && pl.input.to_person ? `\n人への一言（機械は動かない）：${pl.input.to_person}` : "";
+    aw.textContent = `最後の計画：${pl.text}${reason}${person}`;
+    aw.style.whiteSpace = "pre-line";
     aw.className = "why" + (pl.ok ? "" : " bad");
   } else aw.textContent = "毎 3 時間に起き、前回からの操作を振り返って経験を直してから計画を出します。";
 }

@@ -218,6 +218,13 @@ PLAN_TOOL = {
                 "type": "string",
                 "description": "理由（人が読む文・数値と時刻・使った経験の行）",
             },
+            "to_person": {
+                "type": "string",
+                "description": (
+                    "人への一言（任意・数行）。機械に触らない事（水やりを控える／待つ／やる など）を人に伝える。"
+                    "この欄で機械は動かない（守りの層は読まない）。書く時は数値と時刻を引く。"
+                ),
+            },
             "evidence": {
                 "type": "array",
                 "description": "根拠にした数値と時刻",
@@ -252,6 +259,7 @@ CONTROL_SYSTEM = (
     "経験は効き目の事実です。過去にいつ入れていたかは真似しません。"
     "帯の中なら入れない判断（runs を空）もよい計画です。理由には必ず数値と時刻を引きます。"
     "submit_plan が断られたら、理由を読んで直した計画を出し直します。"
+    "水やりなど機械に触らない事で人に伝えたいことがあれば、submit_plan の to_person に数値と時刻を引いて数行で書きます（任意）。"
     "作物の知識が要る時は「栽培の専門家」に、読む場所・聞きたいこと・返す形を書いて 1 問ずつ渡します。"
     "ワークフローは使いません。日本語で短く。"
 )
@@ -259,6 +267,19 @@ CONTROL_SYSTEM = (
 EXPERT_SYSTEM = (
     "あなたは栽培の専門家です。答えは /mnt/memory/ の下にある知識の置き場に書かれた事だけを根拠にし、"
     "出どころ（ファイル名と見出し）を必ず添えます。置き場に無い事は「知識に無い」と書きます。日本語で短く。"
+)
+
+
+# 比べる相手（評価の「1 体」・設計書 §7）：制御役 1 体が振り返り（経験を書く）も計画もする。専門家は呼べない。
+SINGLE_SYSTEM = (
+    CONTROL_SYSTEM.replace(
+        "作物の知識が要る時は「栽培の専門家」に、読む場所・聞きたいこと・返す形を書いて 1 問ずつ渡します。",
+        "",
+    )
+    + "この設定では、あなた 1 体が振り返りも計画もします（ほかの役はいません）。"
+    "振り返りでは記録を作業場の Python（pandas）で読んで計算し、経験（/experience.md）を書き直します。"
+    "数を頭で数えず、必ずコードで出します。記録の穴にかかる操作は効き目を数えません。"
+    "作物の知識が要る時は /mnt/memory/ の知識の置き場を自分で読みます。"
 )
 
 
@@ -374,6 +395,40 @@ def ensure_agents(client, ids: dict) -> dict:
     return ids
 
 
+def ensure_single(client, ids: dict) -> dict:
+    """評価の「1 体」の制御役（Opus・作業場の道具と submit_plan・名簿なし）。"""
+    if "single" not in ids:
+        a = client.beta.agents.create(
+            name="制御役（1 体）",
+            description="比べる相手：振り返りも計画も 1 体でする制御役。",
+            model=MODELS["control"],
+            system=SINGLE_SYSTEM,
+            tools=[toolset(["bash", "read", "write", "edit", "glob", "grep"]), PLAN_TOOL],
+        )
+        ids["single"] = a.id
+        save_ids(ids)
+    return ids
+
+
+def sync_plan_tool(client, ids: dict) -> list[str]:
+    """制御役（と 1 体）の submit_plan と依頼の文を今の PLAN_TOOL・CONTROL_SYSTEM にそろえる（tools は丸ごと置き換え）。"""
+    out = []
+    for role, system, tools in (
+        ("control", CONTROL_SYSTEM, [toolset(["bash", "read", "glob", "grep"]), PLAN_TOOL]),
+        (
+            "single",
+            SINGLE_SYSTEM,
+            [toolset(["bash", "read", "write", "edit", "glob", "grep"]), PLAN_TOOL],
+        ),
+    ):
+        if role not in ids:
+            continue
+        a = client.beta.agents.retrieve(ids[role])
+        u = client.beta.agents.update(ids[role], version=a.version, tools=tools, system=system)
+        out.append(f"{role}：版 {a.version}→{u.version}")
+    return out
+
+
 def main() -> None:
     """uv run saibai-agents setup：環境・置き場 4 つ・エージェント 3 体を作る（あれば使い回す）。
     uv run saibai-agents models：作ってあるエージェントのモデルと effort を MODELS にそろえる。
@@ -392,6 +447,11 @@ def main() -> None:
         ensure_stores(client, ids)
         ensure_agents(client, ids)
         print(json.dumps({k: v for k, v in ids.items() if not k.startswith("probe")}, indent=2))
+    elif cmd == "plan-tool":  # uv run saibai-agents plan-tool：submit_plan（to_person）をそろえる
+        print("\n".join(sync_plan_tool(client, ids)))
+    elif cmd == "single":  # uv run saibai-agents single：評価の「1 体」を作る
+        ensure_single(client, ids)
+        print(ids["single"])
     elif cmd == "models":  # uv run saibai-agents models：役ごとのモデルと effort をそろえる
         print("\n".join(sync_models(client, ids)))
     elif (

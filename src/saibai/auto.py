@@ -36,6 +36,9 @@ REVIEW_PROMPT = (
 )
 
 
+TO_PERSON_HINT = "水やりなど機械に触らない事で人に伝えたいことがあれば、submit_plan の to_person に数値と時刻を引いて数行で（任意・機械は動かない）。"
+
+
 def plan_prompt(now: datetime, status: dict, target: dict, weather: dict | None = None) -> str:
     """weather＝Weather.summary()（無ければ「天気は無し」と書く）。生の JSON は入れない。"""
     m = status.get("meter") or {}
@@ -50,7 +53,9 @@ def plan_prompt(now: datetime, status: dict, target: dict, weather: dict | None 
         + prompt_block(weather)
         + "次の起動（約 3 時間後）までの計画を submit_plan で 1 つ出してください。"
         "/mnt/memory/saibai-experience/experience.md の経験（効き目）と、必要なら温湿度の記録を読み、"
-        "理由にはどの経験の行を使ったかと数値と時刻を引いてください。結果を受けたら一言で締めてください。"
+        "理由にはどの経験の行を使ったかと数値と時刻を引いてください。"
+        + TO_PERSON_HINT
+        + "結果を受けたら一言で締めてください。"
     )
 
 
@@ -226,7 +231,11 @@ class AutoRunner:
                 runs,
                 evidence,
                 "オート",
-                extra={"reason": ev.input.get("reason"), "weather": weather},
+                extra={
+                    "reason": ev.input.get("reason"),
+                    "to_person": ev.input.get("to_person"),
+                    "weather": weather,
+                },
             )
             text = v.text() if runs else ("受け付けた：今回は入れない。" if v.ok else v.text())
             rec["plans"].append({"input": ev.input, "ok": v.ok, "text": text})
@@ -296,7 +305,12 @@ class AutoRunner:
                 runs,
                 evidence,
                 "定時",
-                extra={"reason": reason, "weather": weather, "by": "AI の分"},
+                extra={
+                    "reason": reason,
+                    "to_person": ev.input.get("to_person"),
+                    "weather": weather,
+                    "by": "AI の分",
+                },
             )
             minutes = sum(r.minutes for r in runs)
             text = (

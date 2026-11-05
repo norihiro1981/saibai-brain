@@ -1,0 +1,38 @@
+{
+ "season": "autumn",
+ "variant": "actual",
+ "window": [
+  "2026-10-20",
+  "2026-10-26"
+ ],
+ "sim": {
+  "k_per_h": 0.05848035476425734,
+  "kh_per_h": 4.337441817767116,
+  "s": 0.13572647055370726,
+  "g": 7.261009087828453
+ },
+ "guard": "再生：湿度 75% 以上は入れない・85% で切る",
+ "metrics": {
+  "hours": 168.0,
+  "vpd_in_band_h": 126.4,
+  "vpd_above_h": 25.6,
+  "vpd_below_h": 16.0,
+  "humidifier_min": 359.0,
+  "switch_on_count": 2,
+  "plans": 0,
+  "plans_refused": 0,
+  "guard_offs": 0,
+  "fault_windows": 0,
+  "lured_plans": 0,
+  "on_min_in_fault": 0.0,
+  "wakes": 0,
+  "cost_cents": 0.0,
+  "cost_per_wake_cents": 0.0
+ },
+ "to_person": [],
+ "water_hold_first": null,
+ "plans": [],
+ "wakes": [],
+ "guard_off_list": [],
+ "stopped": null
+}

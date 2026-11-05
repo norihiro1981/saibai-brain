@@ -1,0 +1,108 @@
+{
+ "season": "summer",
+ "variant": "threshold",
+ "window": [
+  "2026-09-03",
+  "2026-09-09"
+ ],
+ "sim": {
+  "k_per_h": 0.044566493013153415,
+  "kh_per_h": 0.6435494783019042,
+  "s": 0.11297814613191542,
+  "g": 2.94870616354589
+ },
+ "guard": "再生：湿度 75% 以上は入れない・85% で切る",
+ "metrics": {
+  "hours": 168.0,
+  "vpd_in_band_h": 76.5,
+  "vpd_above_h": 20.8,
+  "vpd_below_h": 70.7,
+  "humidifier_min": 92.0,
+  "switch_on_count": 3,
+  "plans": 3,
+  "plans_refused": 0,
+  "guard_offs": 0,
+  "fault_windows": 4,
+  "lured_plans": 0,
+  "on_min_in_fault": 0.0,
+  "wakes": 0,
+  "cost_cents": 0.0,
+  "cost_per_wake_cents": 0.0
+ },
+ "to_person": [],
+ "water_hold_first": null,
+ "plans": [
+  {
+   "at": "2026-09-05T17:00:57+09:00",
+   "who": "閾値",
+   "input": {
+    "runs": [
+     {
+      "start": "2026-09-05T17:00:57+09:00",
+      "minutes": 30
+     }
+    ],
+    "reason": "湿度 69.63% が 70% を下回った",
+    "evidence": [
+     {
+      "device": "node_a",
+      "metric": "rh_pct",
+      "value": 69.63,
+      "time": "2026-09-05T17:00:57+09:00"
+     }
+    ]
+   },
+   "ok": true,
+   "text": "受け付けた：守りの層の線をすべて満たす。"
+  },
+  {
+   "at": "2026-09-05T17:50:48+09:00",
+   "who": "閾値",
+   "input": {
+    "runs": [
+     {
+      "start": "2026-09-05T17:50:48+09:00",
+      "minutes": 30
+     }
+    ],
+    "reason": "湿度 69.97% が 70% を下回った",
+    "evidence": [
+     {
+      "device": "node_a",
+      "metric": "rh_pct",
+      "value": 69.97,
+      "time": "2026-09-05T17:50:48+09:00"
+     }
+    ]
+   },
+   "ok": true,
+   "text": "受け付けた：守りの層の線をすべて満たす。"
+  },
+  {
+   "at": "2026-09-05T19:20:19+09:00",
+   "who": "閾値",
+   "input": {
+    "runs": [
+     {
+      "start": "2026-09-05T19:20:19+09:00",
+      "minutes": 30
+     }
+    ],
+    "reason": "湿度 69.59% が 70% を下回った",
+    "evidence": [
+     {
+      "device": "node_a",
+      "metric": "rh_pct",
+      "value": 69.59,
+      "time": "2026-09-05T19:20:19+09:00"
+     }
+    ]
+   },
+   "ok": true,
+   "text": "受け付けた：守りの層の線をすべて満たす。"
+  }
+ ],
+ "wakes": [],
+ "guard_off_list": [],
+ "stopped": null
+}
