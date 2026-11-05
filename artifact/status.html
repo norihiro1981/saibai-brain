@@ -3,7 +3,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
-/* 計器盤 v3：上に今の値と VPD のチャート（狙いの帯つき）、下に任せる度合いの順に 手動・定時・オート・止める */
+/* 計器盤 v4（設計書 v0.7）：今の値・VPD の枠（狙いの帯・外の天気）・温度と湿度の枠・任せる度合いの順に 手動・定時（長さは AI）・オート・止める */
 :root {
   --bg: #f3f5f1;        /* 苔の色に寄せた紙 */
   --panel: #ffffff;
@@ -62,11 +62,24 @@ h2 { font-size: .85rem; margin: 0; color: var(--muted); letter-spacing: .08em; f
 .range { display: flex; gap: 4px; }
 .range button { padding: 3px 10px; font-size: .78rem; border-radius: 6px; }
 .range button[aria-pressed="true"] { background: var(--accent); color: var(--panel); }
-#chartBox { width: 100%; min-width: 0; }
-#chartBox svg { display: block; width: 100%; height: auto; }
-#chartBox text { font-family: var(--font-num); font-size: 10px; fill: var(--muted); }
+.charts { display: grid; gap: 20px; }
+.frame { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px 8px; display: grid; gap: 8px; min-width: 0; }
+.frame.vpdf { border-top: 3px solid var(--accent); }
+.frame.thf { border-top: 3px solid var(--rh); }
+.frame h3 { margin: 0; font-size: .9rem; letter-spacing: .06em; }
+.frame-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 12px; }
+.plot { width: 100%; min-width: 0; }
+.plot svg { display: block; width: 100%; height: auto; }
+.plot text { font-family: var(--font-num); font-size: 10px; fill: var(--muted); }
+.weather { font-size: .82rem; line-height: 1.6; color: var(--fg); border-top: 1px dashed var(--line); padding-top: 6px; overflow-wrap: anywhere; }
+.weather .src { display: block; color: var(--muted); font-size: .7rem; }
+.weather .wwhy { display: block; color: var(--warn); }
+.demo { color: var(--warn); font-weight: 700; }
 .controls { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 6px 18px; display: grid; }
-.mode { display: grid; grid-template-columns: 5.5em minmax(0, 1fr); gap: 4px 14px; padding: 12px 0; border-bottom: 1px solid var(--grid); align-items: center; }
+.mode { display: grid; grid-template-columns: 6.5em minmax(0, 1fr); gap: 6px 14px; padding: 12px 0; border-bottom: 1px solid var(--grid); align-items: center; }
+.mode > .row + .row { grid-column: 2; }
+.check { display: inline-flex; align-items: center; gap: 6px; font-size: .85rem; cursor: pointer; }
+.check input { width: 1.05em; height: 1.05em; accent-color: var(--accent); }
 .mode:last-of-type { border-bottom: 0; }
 .mode .name { font-weight: 700; letter-spacing: .06em; }
 .mode .name small { display: block; font-weight: 400; color: var(--muted); font-size: .7rem; letter-spacing: .02em; }
@@ -113,7 +126,7 @@ button.danger:hover:not(:disabled) { background: var(--bad); color: var(--panel)
     <div class="gauge">
       <span class="label">相対湿度</span>
       <span class="value"><span id="rh">--</span><span class="unit">%</span></span>
-      <span class="sub">75% 以上は入れない・85% で切る</span>
+      <span class="sub" id="rhLines">守りの層の線 —</span>
     </div>
     <div class="gauge">
       <span class="label">気温</span>
@@ -124,19 +137,33 @@ button.danger:hover:not(:disabled) { background: var(--bad); color: var(--panel)
 
   <div id="msg" class="msg" hidden></div>
 
-  <section class="chart" aria-label="温度・湿度・VPD のチャート">
+  <section class="charts" aria-label="チャート">
     <div class="chart-head">
       <div class="legend">
-        <span><i style="background:var(--band)"></i>狙いの VPD の帯</span>
         <span><i style="background:var(--run)"></i>加湿器が入っていた間</span>
         <span>空白＝記録なし</span>
+        <span><i style="background:var(--bad);width:8px"></i>断られた入</span>
       </div>
       <div class="range" role="group" aria-label="チャートの幅">
         <button id="r6" type="button" aria-pressed="false">6 時間</button>
         <button id="r24" type="button" aria-pressed="true">24 時間</button>
       </div>
     </div>
-    <div id="chartBox"><p class="note">チャートを読んでいます。</p></div>
+    <div class="frame vpdf">
+      <div class="frame-head">
+        <h3>VPD（kPa）</h3>
+        <div class="legend"><span><i style="background:var(--accent)"></i>VPD</span><span><i style="background:var(--band)"></i>狙いの帯</span></div>
+      </div>
+      <div class="plot" id="vpdPlot"><p class="note">チャートを読んでいます。</p></div>
+      <div class="weather" id="weather">外の天気：—</div>
+    </div>
+    <div class="frame thf">
+      <div class="frame-head">
+        <h3>温度（℃）と湿度（%）</h3>
+        <div class="legend"><span><i style="background:var(--temp)"></i>温度（左の軸）</span><span><i style="background:var(--rh)"></i>湿度（右の軸）</span></div>
+      </div>
+      <div class="plot" id="thPlot"></div>
+    </div>
   </section>
 
   <section class="controls" aria-label="加湿器">
@@ -145,28 +172,34 @@ button.danger:hover:not(:disabled) { background: var(--bad); color: var(--panel)
       <div class="row">
         <span class="state" id="plugState">—</span>
         <span id="plugKind" class="tag"></span>
-        <label class="field" for="minutes">分 <input id="minutes" type="number" min="1" max="60" value="30"></label>
+        <label class="field" for="minutes"><input id="minutes" type="number" min="1" max="60" value="30"> 分だけ</label>
         <button id="btnOn" type="button">入れる</button>
         <button id="btnOff" type="button">切る</button>
       </div>
       <span class="why" id="offReasons"></span>
     </div>
     <div class="mode">
-      <span class="name">定時<small>タイマー・AI なし</small></span>
+      <span class="name">定時<small>時刻は人</small></span>
       <div class="row">
         <span class="state" id="timerState">—</span>
-        <label class="field" for="timerStart">毎日 <input id="timerStart" type="time" value="12:00"></label>
-        <label class="field" for="timerMin">分 <input id="timerMin" type="number" min="1" max="60" value="60"></label>
+        <label class="field" for="timerStart">毎日 <input id="timerStart" type="time" value="12:00"> から</label>
+        <label class="field" for="timerMin"><input id="timerMin" type="number" min="1" max="60" value="60"> 分</label>
         <button id="btnTimerOn" type="button">入れる</button>
         <button id="btnTimerOff" type="button">切る</button>
       </div>
+      <div class="row">
+        <label class="check" for="timerAi"><input id="timerAi" type="checkbox"> 長さを AI に任せる（分は制御役・答えが無ければ上の分）</label>
+      </div>
+      <span class="why" id="timerWhy"></span>
     </div>
     <div class="mode">
-      <span class="name">オート<small>エージェント</small></span>
+      <span class="name">オート<small>時刻も分も AI</small></span>
       <div class="row">
         <span class="state" id="autoState">—</span>
         <button id="btnAutoOn" type="button">入れる</button>
-        <button id="btnAutoOff" type="button">切る</button>
+      </div>
+      <div class="row">
+        <button id="btnAutoOff" type="button">止める（オートを切る）</button>
       </div>
       <span class="why" id="autoWhy"></span>
     </div>
@@ -200,7 +233,8 @@ button.danger:hover:not(:disabled) { background: var(--bad); color: var(--panel)
   <p class="note">
     温湿度は、手元に常駐する受け手がクラウドを 30 秒ごとに読んだ値です（読んだ時刻は受け手が読んだ時刻）。
     手動・定時・オートのどれが出した運転も、受け手の守りの層を通ります。断られた時は理由が出ます。
-    狙いの VPD の帯は栽培の知識から決めた値で、ここでは変えられません。この画面は Mac の Claude アプリで開いた時だけ受け手に聞けます。
+    狙いの VPD の帯は栽培の知識から決めた値で、ここでは変えられません。
+    外の天気の出典：気象庁ホームページ（アメダス・天気予報）を加工して作成。取れない時も、加湿器は天気なしで今までどおり動きます。この画面は Mac の Claude アプリで開いた時だけ受け手に聞けます。
   </p>
 </main>
 
@@ -243,6 +277,7 @@ function render(result) {
   $("receiver").textContent = `動いている（${hm(s.receiver.started_at, true)} から）`;
   renderControls(s);
   renderExperience(s.auto && s.auto.experience);
+  renderWeather(s);
   const m = s.meter;
   if (!m) { clearReadings(); setPill("warn", "まだ読めていない"); showMsg(s.last_error ? `読めなかった理由：${s.last_error}` : "受け手が最初の読みを待っています。", false); return; }
   $("temp").textContent = Number(m.temp_c).toFixed(1);
@@ -265,6 +300,9 @@ function renderControls(s) {
   const p = s.plug, g = s.guard, sc = s.schedule, t = s.timer;
   if (!p || !g) return;
   const on = p.actual_on ?? p.want_on;
+  const rl = $("rhLines");
+  rl.textContent = g.set_text || "守りの層の線 —";
+  rl.className = "sub" + (g.humidity_lines === false ? " demo" : "");
   const ps = $("plugState");
   ps.textContent = g.manual_stop ? "止めている" : on ? "入" : "切";
   ps.className = "state" + (on ? " on" : "");
@@ -287,6 +325,13 @@ function renderControls(s) {
     if (document.activeElement !== $("timerStart")) $("timerStart").value = t.start;
     if (document.activeElement !== $("timerMin")) $("timerMin").value = t.minutes;
     $("btnTimerOff").disabled = !t.on;
+    if (document.activeElement !== $("timerAi")) $("timerAi").checked = !!t.ai_minutes;
+    $("timerState").textContent += t.on && t.ai_minutes ? "（長さは AI）" : "";
+    const tw = $("timerWhy"), tl = t.last;
+    if (tl && tl.date) {
+      tw.textContent = `${tl.date} ${tl.start || t.start}：${tl.minutes} 分（${tl.by}）${tl.reason ? "・" + tl.reason : ""}`;
+      tw.className = "why" + (tl.ok === false ? " bad" : "");
+    } else tw.textContent = t.ai_minutes ? `開始の 10 分前に制御役が分を決めます（答えが無ければ ${t.minutes} 分）。` : "";
   }
   const as = $("autoState");
   if (sc && sc.available) {
@@ -308,6 +353,22 @@ function renderControls(s) {
   } else aw.textContent = "毎 3 時間に起き、前回からの操作を振り返って経験を直してから計画を出します。";
 }
 
+function renderWeather(s) {
+  const w = s.weather, box = $("weather");
+  box.replaceChildren();
+  const line = document.createElement("span");
+  if (!w || !w.ok) line.textContent = `天気：取れていない${w && w.reason ? "（" + w.reason + "）" : ""}・加湿器は天気なしで動く`;
+  else line.textContent = w.line || "外の天気：—";
+  box.appendChild(line);
+  const last = s.auto && s.auto.last;
+  const pl = last && last.plans && last.plans.length ? last.plans[last.plans.length - 1] : null;
+  const reason = pl && pl.input && pl.input.reason;
+  if (reason && /天気|予報|雨|晴|曇|降水|外の湿度|アメダス/.test(reason)) {
+    const r = document.createElement("span"); r.className = "wwhy"; r.textContent = `計画の理由：${reason}`; box.appendChild(r);
+  }
+  const src = document.createElement("span"); src.className = "src"; src.textContent = "出典：気象庁ホームページ（アメダス・天気予報）を加工して作成"; box.appendChild(src);
+}
+
 function renderExperience(e) {
   if (!e) { $("expLine").textContent = "オートの置き場につながっていません。"; return; }
   if (e.error) { $("expLine").textContent = `経験を読めなかった（${e.error}）`; return; }
@@ -324,7 +385,7 @@ function renderExperience(e) {
   $("expTable").hidden = !(e.trend && e.trend.length);
 }
 
-// ---- チャート（3 段：VPD・湿度・気温。時刻の軸は共通。null の点で線を切る） ----
+// ---- チャート（2 つの枠：VPD／温度と湿度。時刻の軸はそろえる。null の点で線を切る） ----
 const NS = "http://www.w3.org/2000/svg";
 function el(name, attrs, parent) { const e = document.createElementNS(NS, name); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; }
 
@@ -339,61 +400,70 @@ function runIntervals(actions, t0, t1) {
   return out.map(([a, b]) => [Math.max(a, t0), Math.min(b, t1)]).filter(([a, b]) => b > a);
 }
 
-function drawChart(h) {
-  const box = $("chartBox");
+function scale(vals, extra, minPad) {
+  let lo = Math.min(...vals, ...(extra || [])), hi = Math.max(...vals, ...(extra || []));
+  const pad = (hi - lo) * 0.12 || minPad; return [lo - pad, hi + pad, pad];
+}
+
+// 1 つの枠を描く。series＝[{i, color, axis:"left"|"right", fmt, lo, hi}]。L と R は 2 つの枠で同じ＝時刻の軸がそろう
+function drawFrame(box, h, series, opts) {
   const pts = h.points || [];
-  if (!pts.filter((p) => p[1] != null).length) { box.innerHTML = '<p class="note">この幅の記録はまだありません。</p>'; return; }
   const W = Math.max(320, Math.round(box.clientWidth || 700));
-  const L = 40, R = 8, top = 6, laneH = [96, 64, 64], gap = 14, axisH = 18;
-  const H = top + laneH.reduce((a, b) => a + b, 0) + gap * 2 + axisH;
+  const L = 44, R = 40, top = 8, H0 = opts.height, axisH = 18, H = top + H0 + axisH;
   const t1 = new Date(h.now).getTime(), t0 = t1 - h.hours * 3600e3;
   const x = (t) => L + ((t - t0) / (t1 - t0)) * (W - L - R);
-  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `直近 ${h.hours} 時間の VPD・湿度・気温` });
-  const runs = runIntervals(h.actions || [], t0, t1);
-  const lanes = [
-    { i: 3, name: "VPD kPa", color: "var(--accent)", band: [target.vpd_low_kpa, target.vpd_high_kpa], fmt: (v) => v.toFixed(2) },
-    { i: 2, name: "湿度 %", color: "var(--rh)", fmt: (v) => v.toFixed(0) },
-    { i: 1, name: "気温 ℃", color: "var(--temp)", fmt: (v) => v.toFixed(1) },
-  ];
-  let y0 = top;
-  lanes.forEach((ln, k) => {
-    const hgt = laneH[k];
-    const vals = pts.map((p) => p[ln.i]).filter((v) => v != null);
-    let lo = Math.min(...vals), hi = Math.max(...vals);
-    if (ln.band) { lo = Math.min(lo, ln.band[0]); hi = Math.max(hi, ln.band[1]); }
-    const pad = (hi - lo) * 0.12 || (ln.i === 3 ? 0.05 : 1);
-    lo -= pad; hi += pad;
-    const y = (v) => y0 + hgt - ((v - lo) / (hi - lo)) * hgt;
-    for (const [a, b] of runs) el("rect", { x: x(a), y: y0, width: Math.max(1, x(b) - x(a)), height: hgt, fill: "var(--run)" }, svg);
-    if (ln.band) el("rect", { x: L, y: y(ln.band[1]), width: W - L - R, height: y(ln.band[0]) - y(ln.band[1]), fill: "var(--band)" }, svg);
-    for (const v of [lo + pad, hi - pad]) {
-      el("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), stroke: "var(--grid)", "stroke-width": 1 }, svg);
-      const tx = el("text", { x: L - 4, y: y(v) + 3, "text-anchor": "end" }, svg); tx.textContent = ln.fmt(v);
-    }
-    const nm = el("text", { x: L + 4, y: y0 + 11 }, svg); nm.textContent = ln.name;
-    let d = "", pen = false, last = null;
-    for (const p of pts) {
-      if (p[ln.i] == null) { pen = false; continue; }
-      const X = x(new Date(p[0]).getTime()).toFixed(1), Y = y(p[ln.i]).toFixed(1);
-      d += (pen ? "L" : "M") + X + " " + Y; pen = true; last = [X, Y, p[ln.i]];
-    }
-    el("path", { d, fill: "none", stroke: ln.color, "stroke-width": ln.i === 3 ? 2 : 1.5, "stroke-linejoin": "round" }, svg);
-    if (last) el("circle", { cx: last[0], cy: last[1], r: 3, fill: ln.color }, svg);
-    y0 += hgt + gap;
-  });
-  const yAxis = y0 - gap + 4;
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": opts.label });
+  for (const [a, b] of runIntervals(h.actions || [], t0, t1)) el("rect", { x: x(a), y: top, width: Math.max(1, x(b) - x(a)), height: H0, fill: "var(--run)" }, svg);
+  const ys = series.map((sr) => (v) => top + H0 - ((v - sr.lo) / (sr.hi - sr.lo)) * H0);
+  if (opts.band) { const y = ys[0]; el("rect", { x: L, y: y(opts.band[1]), width: W - L - R, height: y(opts.band[0]) - y(opts.band[1]), fill: "var(--band)" }, svg);
+    for (const v of opts.band) { const tx = el("text", { x: W - R + 4, y: y(v) + 3 }, svg); tx.textContent = v.toFixed(1); } }
   const stepH = h.hours > 12 ? 6 : h.hours > 3 ? 1 : 0.5;
   const first = Math.ceil(t0 / (stepH * 3600e3)) * stepH * 3600e3;
   for (let t = first; t <= t1; t += stepH * 3600e3) {
-    el("line", { x1: x(t), x2: x(t), y1: top, y2: yAxis - 4, stroke: "var(--grid)", "stroke-width": 1 }, svg);
-    const tx = el("text", { x: x(t), y: yAxis + 10, "text-anchor": "middle" }, svg); tx.textContent = hm(new Date(t).toISOString());
+    el("line", { x1: x(t), x2: x(t), y1: top, y2: top + H0, stroke: "var(--grid)", "stroke-width": 1 }, svg);
+    const tx = el("text", { x: x(t), y: top + H0 + 13, "text-anchor": "middle" }, svg); tx.textContent = hm(new Date(t).toISOString());
   }
+  series.forEach((sr, k) => {
+    const y = ys[k];
+    for (const v of [sr.lo + sr.pad, (sr.lo + sr.hi) / 2, sr.hi - sr.pad]) {
+      if (k === 0) el("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), stroke: "var(--grid)", "stroke-width": 1 }, svg);
+      const right = sr.axis === "right";
+      const tx = el("text", { x: right ? W - R + 4 : L - 5, y: y(v) + 3, "text-anchor": right ? "start" : "end", style: `fill:${sr.color}` }, svg);
+      tx.textContent = sr.fmt(v);
+    }
+    let d = "", pen = false, last = null;
+    for (const p of pts) {
+      if (p[sr.i] == null) { pen = false; continue; }
+      const X = x(new Date(p[0]).getTime()).toFixed(1), Y = y(p[sr.i]).toFixed(1);
+      d += (pen ? "L" : "M") + X + " " + Y; pen = true; last = [X, Y];
+    }
+    el("path", { d, fill: "none", stroke: sr.color, "stroke-width": sr.width || 1.6, "stroke-linejoin": "round" }, svg);
+    if (last) el("circle", { cx: last[0], cy: last[1], r: 3, fill: sr.color }, svg);
+  });
+  el("rect", { x: L, y: top, width: W - L - R, height: H0, fill: "none", stroke: "var(--line)" }, svg);
   for (const a of h.actions || []) {
     if (a.what !== "入" || a.accepted) continue; // 断られた入は印だけ
     const t = new Date(a.at).getTime(); if (t < t0) continue;
-    el("path", { d: `M${x(t)} ${yAxis - 4}l-4 -7h8z`, fill: "var(--bad)" }, svg).appendChild(Object.assign(document.createElementNS(NS, "title"), { textContent: `${hm(a.at)} ${a.who} の入を断った：${(a.reasons || []).join("／")}` }));
+    el("path", { d: `M${x(t)} ${top + H0}l-4 -7h8z`, fill: "var(--bad)" }, svg).appendChild(Object.assign(document.createElementNS(NS, "title"), { textContent: `${hm(a.at)} ${a.who} の入を断った：${(a.reasons || []).join("／")}` }));
   }
   box.replaceChildren(svg);
+}
+
+function drawChart(h) {
+  const pts = h.points || [];
+  const col = (i) => pts.map((p) => p[i]).filter((v) => v != null);
+  if (!col(2).length) { $("vpdPlot").innerHTML = '<p class="note">この幅の記録はまだありません。</p>'; $("thPlot").replaceChildren(); return; }
+  const band = [target.vpd_low_kpa, target.vpd_high_kpa];
+  const vp = col(3).length ? col(3) : band;
+  const [vlo, vhi, vpad] = scale(vp, band, 0.05);
+  drawFrame($("vpdPlot"), h, [{ i: 3, color: "var(--accent)", axis: "left", fmt: (v) => v.toFixed(2), lo: vlo, hi: vhi, pad: vpad, width: 2.2 }],
+    { height: 130, band, label: `直近 ${h.hours} 時間の VPD と狙いの帯` });
+  const [tlo, thi, tpad] = scale(col(1), null, 1);
+  const [rlo, rhi, rpad] = scale(col(2), null, 2);
+  drawFrame($("thPlot"), h, [
+    { i: 1, color: "var(--temp)", axis: "left", fmt: (v) => v.toFixed(1), lo: tlo, hi: thi, pad: tpad },
+    { i: 2, color: "var(--rh)", axis: "right", fmt: (v) => v.toFixed(0), lo: rlo, hi: rhi, pad: rpad },
+  ], { height: 130, label: `直近 ${h.hours} 時間の温度と湿度` });
 }
 
 let mcpRef = null, unwatchHistory = null;
@@ -406,14 +476,14 @@ function watchHistory() {
       if (h.target) target = h.target;
       lastHistory = h; drawChart(h);
     } else if (!lastHistory) {
-      $("chartBox").innerHTML = `<p class="note">チャートを読めませんでした（${ev.error && ev.error.code}）。受け手の口が新しい版か、Claude アプリを起動し直したかを見てください。</p>`;
+      $("vpdPlot").innerHTML = `<p class="note">チャートを読めませんでした（${ev.error && ev.error.code}）。受け手の口が新しい版か、Claude アプリを起動し直したかを見てください。</p>`;
     }
   }, { refetchInterval: 60000 });
 }
 for (const [id, hr] of [["r6", 6], ["r24", 24]]) {
   $(id).addEventListener("click", () => { hours = hr; $("r6").setAttribute("aria-pressed", hr === 6); $("r24").setAttribute("aria-pressed", hr === 24); watchHistory(); });
 }
-new ResizeObserver(() => { if (lastHistory) drawChart(lastHistory); }).observe($("chartBox"));
+new ResizeObserver(() => { if (lastHistory) drawChart(lastHistory); }).observe($("vpdPlot"));
 
 async function act(tool, input, label) {
   if (!mcpRef) return;
@@ -437,10 +507,11 @@ async function act(tool, input, label) {
 const mins = (id, d) => Math.max(1, Math.round(Number($(id).value) || d));
 $("btnOn").addEventListener("click", () => { const m = mins("minutes", 30); act("set_humidifier", { on: true, minutes: m }, `${m} 分入れる`); });
 $("btnOff").addEventListener("click", () => act("set_humidifier", { on: false }, "切る"));
-$("btnTimerOn").addEventListener("click", () => act("set_timer", { on: true, start: $("timerStart").value || "12:00", minutes: mins("timerMin", 60) }, "定時を入れる"));
+$("btnTimerOn").addEventListener("click", () => act("set_timer", { on: true, start: $("timerStart").value || "12:00", minutes: mins("timerMin", 60), ai_minutes: $("timerAi").checked }, "定時を入れる"));
+$("timerAi").addEventListener("change", () => act("set_timer", { on: $("timerState").classList.contains("on"), ai_minutes: $("timerAi").checked }, $("timerAi").checked ? "長さを AI に任せる" : "長さを人に戻す"));
 $("btnTimerOff").addEventListener("click", () => act("set_timer", { on: false }, "定時を切る"));
 $("btnAutoOn").addEventListener("click", () => act("set_auto", { on: true }, "オートを入れる"));
-$("btnAutoOff").addEventListener("click", () => act("set_auto", { on: false }, "オートを切る"));
+$("btnAutoOff").addEventListener("click", () => act("set_auto", { on: false }, "オートを止める"));
 $("btnStop").addEventListener("click", () => act("stop_all", { release: false }, "止める"));
 $("btnRelease").addEventListener("click", () => act("stop_all", { release: true }, "止めを解く"));
 
@@ -453,7 +524,7 @@ function onError(err) {
 
 (async () => {
   const mcp = await claude.use("mcp");
-  if (!mcp) { setPill("bad", "使えない画面"); showMsg("この画面では受け手に聞けません。Mac の Claude アプリで開いてください。", true); $("chartBox").innerHTML = '<p class="note">チャートは Mac の Claude アプリで開いた時だけ出ます。</p>'; return; }
+  if (!mcp) { setPill("bad", "使えない画面"); showMsg("この画面では受け手に聞けません。Mac の Claude アプリで開いてください。", true); $("vpdPlot").innerHTML = '<p class="note">チャートは Mac の Claude アプリで開いた時だけ出ます。</p>'; return; }
   mcpRef = mcp;
   mcp.watchTool(SERVER, "get_status", null, (ev) => { if (ev.type === "data") render(ev.result); else onError(ev.error); }, { refetchInterval: 30000 });
   watchHistory();
