@@ -24,6 +24,9 @@ ble = ["bleak"]
 
 [dependency-groups]
 dev = ["pytest", "ruff"]
+video = [
+    "playwright>=1.64.1",
+]
 
 [build-system]
 requires = ["hatchling"]
