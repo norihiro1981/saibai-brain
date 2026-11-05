@@ -29,11 +29,11 @@ ROOT = Path(__file__).resolve().parent.parent
 BUILD = ROOT / "video" / "assets" / "build"
 OUT = ROOT / "video" / "out"
 W, H = 1920, 1080
-ORDER = "⓪O①②③④⑤⑥⑦"  # O＝冒頭の実写の札
+ORDER = "O⓪①②③④⑤⑥⑦⑧"  # O＝冒頭の実写
 AIVIS = "http://127.0.0.1:10101"
 VOICE_ID = 1937616896  # にせ（低めで落ち着いた講義調・ACML 1.0＝商用可・クレジット任意）
 LEAD, GAP = 0.5, 0.45  # 場面の頭の間・行と行の間
-TAIL = {"⓪": 1.6, "⑦": 4.0}  # 場面の後ろの間（ほかは 0.8）
+TAIL = {"⓪": 1.0, "⑧": 4.5}  # 場面の後ろの間（ほかは 0.8）
 # 冒頭の実写の並び（手元だけ＝git に入らない）。無ければ札で代える。形：
 # {"parts": [{"clip": "norihiro_sample/IMG_0001.mov", "from": 0, "to": 30, "gain_db": 12},
 #            {"black": 1.0}, {"title": 2.5, "turn": true}]}
@@ -63,7 +63,7 @@ def read_script() -> dict[str, list[str]]:
     scenes: dict[str, list[str]] = {}
     cur = None
     for line in (ROOT / "video" / "script.md").read_text().splitlines():
-        m = re.match(r"## ([⓪①②③④⑤⑥⑦])", line)
+        m = re.match(r"## ([⓪①②③④⑤⑥⑦⑧])", line)
         if m:
             cur = m.group(1)
             scenes[cur] = []
@@ -114,8 +114,41 @@ def load_records() -> dict:
             "git", "log", "--reverse", "--format=%ad  %s", "--date=format:%m/%d %H:%M"
         ).splitlines(),
     )
+    rec.update(day_records("2026-10-22"), replay=replay_table())
     (BUILD / "records.json").write_text(json.dumps(rec, ensure_ascii=False, indent=1))
     return rec
+
+
+def day_records(day: str) -> dict:
+    """課題の絵：その日の部屋の VPD（10 分ごと・加湿器の入）と外の湿度（毎正時）。どちらも公開の記録。"""
+    import csv
+
+    room = [
+        [
+            int(r["at"][11:13]) + int(r["at"][14:16]) / 60,
+            float(r["vpd_kpa"]),
+            r["humidifier"] == "1",
+        ]
+        for r in csv.DictReader((ROOT / "results/replay_autumn_actual_series.csv").open())
+        if r["at"].startswith(day)
+    ]
+    lines = (ROOT / "data/weather_hourly_2026-10-03_2026-10-30.csv").read_text().splitlines()
+    out = [
+        [int(r["at"][11:13]), float(r["rh_pct"])]
+        for r in csv.DictReader(x for x in lines if not x.startswith("#"))
+        if r["at"].startswith(day) and r["rh_pct"]
+    ]
+    return {"day_room": room, "day_out": out}
+
+
+def replay_table() -> dict:
+    """results/replay_table.md から、季節・通りごとの「帯の中の時間」を読む。"""
+    tb: dict = {}
+    for line in (ROOT / "results/replay_table.md").read_text().splitlines():
+        cols = [x.strip() for x in line.strip("|").split("|")]
+        if len(cols) > 3 and cols[0] in ("夏", "秋"):
+            tb.setdefault(cols[0], {})[cols[1]] = float(cols[2].split()[0])
+    return tb
 
 
 # ---------------------------------------------------------------- 声
@@ -263,9 +296,15 @@ function track(t, keys, dur = .9) {
 }
 function hl(sel, on) { const e = $(sel); if (e) e.classList.toggle("hl", !!on); }
 let __init = false;
-window.__frame = t => {
+// 動画を x 秒へ送り、絵が出るまで待つ
+async function seek(v, x) {
+  x = Math.max(0, Math.min(x, v.duration - .05));
+  if (Math.abs(v.currentTime - x) < .004) return;
+  await new Promise(r => { v.addEventListener("seeked", r, { once: true }); v.currentTime = x; });
+}
+window.__frame = async t => {
   if (!__init) { __init = true; M = $("main"); if (M) { M.style.transform = "none"; } if (typeof setup === "function") setup(); }
-  subs(t); if (typeof render === "function") render(t);
+  subs(t); if (typeof render === "function") await render(t);
   $("#v-subbg").style.opacity = C.length ? 1 : 0;
 };
 """
@@ -341,7 +380,6 @@ def scene_pages(rec: dict):
     # 計器盤に出す理由は、AI の書き崩れ（「0.0 1.298」）のある文を除いた頭の 2 文
     sentences = [s + "。" for s in reason.split("。") if s and "0.0 1.298" not in s]
     short_reason = "".join(sentences[:2]) + "…"
-    cost = rec["cost"]
 
     def timer_patch(s):
         s["meter"].update(
@@ -362,48 +400,63 @@ def scene_pages(rec: dict):
             },
         }
 
-    # ⓪ 課題 ------------------------------------------------------------
+    # ⓪ 課題：外の天気で崩れる（10/22 の本物の記録・数字は出さない） ------------------
     def p0(cues, total):
         body = """
-<div id="k0" class="kicker" style="left:160px;top:190px">仕事として主に農業をしている人（基幹的農業従事者）</div>
-<div id="yr" class="num" style="left:160px;top:262px;font-size:40px;color:#98a79d">2000 年</div>
-<div id="ghost" style="left:160px;top:340px;width:1400px;height:110px;border:3px dashed #3a4a40;border-radius:12px"></div>
-<div id="bar" style="left:160px;top:340px;width:1400px;height:110px;border-radius:12px;background:linear-gradient(90deg,#8fc09f,#5f8f70)"></div>
-<div id="num" style="left:160px;top:470px;font-size:120px;font-weight:700;line-height:1"><span id="n" class="num">240.0</span><span style="font-size:52px;margin-left:12px">万人</span></div>
-<div id="half" style="left:1000px;top:500px;font-size:40px;color:#f0b45a;font-weight:700">25 年で半分以下</div>
-<div id="age" style="left:160px;top:640px;font-size:50px;font-weight:700">平均 <span id="an" class="num" style="font-size:96px">60.0</span> 歳</div>
-<div id="old" style="left:720px;top:680px;font-size:36px;color:#98a79d">65 歳以上が 7 割</div>
-<div id="moon" style="left:1560px;top:110px;width:120px;height:120px;border-radius:50%;box-shadow:-26px 14px 0 0 #f3e6c4"></div>
-<div id="src" class="mut" style="left:160px;top:860px;font-size:22px">出典：令和 7 年版 食料・農業・農村白書（農林水産省）・2025 年 103.6 万人・平均 67.7 歳</div>
+<div id="k" class="kicker" style="left:160px;top:80px">課題</div>
+<div id="h" class="head" style="left:160px;top:124px">外の天気で、すぐに崩れる</div>
+<div id="cap" class="mut" style="left:1400px;top:150px;font-size:24px">秋の記録・ある 1 日</div>
+<svg id="ch" width="1600" height="600" style="left:160px;top:240px;overflow:visible">
+  <rect id="band" x="0" width="1600" fill="rgba(143,192,159,.16)"/>
+  <text id="bandl" x="10" fill="#8fc09f" font-size="24">狙いの帯</text>
+  <path id="red" fill="rgba(239,125,111,.45)"/>
+  <g id="hum"></g>
+  <path id="out" fill="none" stroke="#7fb3d4" stroke-width="4" stroke-dasharray="10 8"/>
+  <path id="room" fill="none" stroke="#e8efe9" stroke-width="5"/>
+  <g id="ax" fill="#98a79d" font-size="22"></g>
+  <text id="outl" fill="#7fb3d4" font-size="26">外の湿度</text>
+  <text id="rooml" fill="#e8efe9" font-size="26">部屋の空気の乾き（VPD）</text>
+</svg>
+<div id="hand" class="chip amber" style="width:430px;font-size:26px">人が気づいて入れたのは、午後</div>
+<div id="burd" style="left:1400px;top:196px;font-size:30px;color:#ef7d6f;font-weight:700">帯の外＝作物に負担</div>
 """
         js = """
+const R = D.room, O = D.out, H0 = 4, H1 = 24, WX = 1600, HY = 600;
+const X = h => (h - H0) / (H1 - H0) * WX;
+const YV = v => HY - (v - .3) / (1.4 - .3) * HY;      // 部屋の VPD
+const YO = r => HY - (r - 40) / (100 - 40) * HY;     // 外の湿度
+function setup() {
+  $("#band").setAttribute("y", YV(.8)); $("#band").setAttribute("height", YV(.4) - YV(.8));
+  $("#bandl").setAttribute("y", YV(.4) - 12);
+  $("#ax").innerHTML = [6, 9, 12, 15, 18, 21].map(h => `<text x="${X(h) - 18}" y="${HY + 36}">${h} 時</text>`).join("");
+  $("#hum").innerHTML = R.filter(p => p[2]).map(p => `<rect x="${X(p[0])}" y="0" width="${WX / (H1 - H0) / 6 + 1}" height="${HY}" fill="rgba(127,179,212,.18)" opacity="0"/>`).join("");
+}
 function render(t) {
-  const k = E(P(t, .1, .8));
-  ["#k0", "#yr", "#ghost", "#bar", "#num", "#src"].forEach(s => fade(s, k));
-  const sh = EIO(P(t, c(0) + .5, ce(0) - c(0) - .3));
-  $("#bar").style.width = L(1400, 1400 * 103.6 / 240, sh) + "px";
-  $("#n").textContent = L(240, 103.6, sh).toFixed(1);
-  $("#yr").textContent = (sh < 1 ? Math.round(L(2000, 2025, sh)) : 2025) + " 年";
-  fade("#half", E(P(t, w(0, "半分"), .6)), 16);
-  const a = E(P(t, c(1), 1.4));
-  fade("#age", E(P(t, c(1) - .1, .5)));
-  $("#an").textContent = L(60, 67.7, a).toFixed(1);
-  fade("#old", E(P(t, c(1) + 1.3, .6)), 16);
-  const dim = 1 - .7 * P(t, w(1, "それでも"), .9);
-  $("#v-layer").style.opacity = dim;
-  fade("#moon", E(P(t, w(1, "夜"), 1.0)), 0, .8);
-  $("#moon").style.opacity = E(P(t, w(1, "夜"), 1.0)) / dim;
-  $("#v-black").style.opacity = P(t, T - 1.3, 1.1);
+  fade("#k", E(P(t, .1, .5))); fade("#h", E(P(t, .25, .6))); fade("#cap", E(P(t, .5, .6)));
+  fade("#ch", E(P(t, .3, .6)), 0);
+  const h = L(H0, H1, EIO(P(t, c(0) + .2, ce(1) - c(0))));
+  const rp = R.filter(p => p[0] >= H0 && p[0] <= h), op = O.filter(p => p[0] >= H0 && p[0] <= h);
+  $("#room").setAttribute("d", rp.map((p, i) => (i ? "L" : "M") + X(p[0]) + "," + YV(p[1])).join(""));
+  $("#out").setAttribute("d", op.map((p, i) => (i ? "L" : "M") + X(p[0]) + "," + YO(p[1])).join(""));
+  const top = rp.map(p => [X(p[0]), YV(Math.max(p[1], .8))]);
+  $("#red").setAttribute("d", top.length ? "M" + top[0][0] + "," + YV(.8) + top.map(q => "L" + q[0] + "," + q[1]).join("") + "L" + top[top.length - 1][0] + "," + YV(.8) + "Z" : "");
+  const a = $("#outl"); a.setAttribute("x", X(6.3)); a.setAttribute("y", YO(93) - 16); a.style.opacity = E(P(t, c(0) + .8, .5));
+  const b = $("#rooml"); b.setAttribute("x", X(4.2)); b.setAttribute("y", YV(.66) + 44); b.style.opacity = E(P(t, c(0) + .8, .5));
+  $$("#hum rect").forEach((r, i) => { const on = R.filter(p => p[2])[i][0] <= h; r.setAttribute("opacity", on ? 1 : 0); });
+  fade("#burd", E(P(t, w(1, "負担") - .2, .6)), 12);
+  const first = R.find(p => p[2]);
+  const tn = w(2, "人のカン") - .3;
+  pos("#hand", 160 + X(first[0]) - 215, 240 + YV(1.3) - 90);
+  fade("#hand", BK(P(t, tn, .6)), 16, .9);
+  $("#v-black").style.opacity = P(t, T - .9, .8);
 }"""
-        return plain(body, js, cues, total, {})
+        return plain(body, js, cues, total, {"room": rec["day_room"], "out": rec["day_out"]})
 
-    # 冒頭の札 ------------------------------------------------------------
+    # 冒頭の札（実写が無い時） ----------------------------------------------------
     def p_open(cues, total):
-        body = """<div style="left:0;top:420px;width:1920px;text-align:center;font-size:44px;color:#e4ebe5">冒頭：実写（作り手）約 35 秒
-<div style="font-size:28px;color:#98a79d;margin-top:14px">暗がりで加湿器を入れる → 昼の手作業 → 暗転 → SwitchBot でひとりでに入る</div></div>"""
+        body = """<div style="left:0;top:420px;width:1920px;text-align:center;font-size:44px;color:#e4ebe5">冒頭：夜の実写（作り手）</div>"""
         return plain(body, "function render(t){}", cues, total, {})
 
-    # 冒頭の題・暗転 ------------------------------------------------------------
     def p_title(cues, total):
         body = """<div id="ttl" style="left:0;top:400px;width:1920px;text-align:center">
 <div style="font-size:104px;font-weight:700;letter-spacing:.14em">栽培室の頭脳</div></div>"""
@@ -413,93 +466,64 @@ function render(t) {
     def p_black(cues, total):
         return plain("", "function render(t){}", cues, total, {})
 
-    # ① 種明かしと問い --------------------------------------------------------
+    # ① 種明かし ------------------------------------------------------------
     def p1(cues, total):
         body = """
 <div id="who" class="kicker" style="left:1200px;top:230px">決めているのは</div>
 <div id="b0" class="chip" style="left:1200px;top:290px;width:620px"><b style="font-size:34px">Sonnet 5.5</b>　分析役</div>
 <div id="b1" class="chip amber" style="left:1200px;top:400px;width:620px"><b style="font-size:34px">Opus 5.5</b>　制御役</div>
 <div id="b2" class="chip" style="left:1200px;top:510px;width:620px"><b style="font-size:34px">Haiku 5.5</b>　専門家</div>
-<div id="nt" class="mut" style="left:1200px;top:630px;font-size:24px">タイマーではなく、3 体の Claude のエージェント</div>
-<div id="dim" style="left:0;top:0;width:1920px;height:1080px;background:#0d1310;opacity:0"></div>
-<div id="q" class="head" style="left:0;top:330px;width:1920px;text-align:center;font-size:92px;line-height:1.35">機械を AI に任せて、<br>大丈夫？</div>
+<div id="nt" class="mut" style="left:1200px;top:630px;font-size:24px">人ではなく、3 体の Claude のエージェント</div>
+<div id="note" class="mut" style="left:1200px;top:60px;font-size:20px">試し：本番は Artifact で加湿器が動く実写に替える</div>
 """
         js = """
 let MW;
 function setup() { MW = M.getBoundingClientRect().width; }
 function render(t) {
   const s = L(.8, 1, E(P(t, 0, 1.4)));
-  const mv = EIO(P(t, c(0) + .6, 1.1));
+  const mv = EIO(P(t, c(0) + .4, 1.1));
   cam(L((1920 - MW * s) / 2, 70, mv), L(60, 40, mv), s);
   M.style.opacity = E(P(t, 0, .6));
-  fade("#who", E(P(t, w(0, "タイマー"), .5)));
+  fade("#note", E(P(t, .2, .5)));
+  fade("#who", E(P(t, w(0, "人では") - .2, .5)));
   for (let i = 0; i < 3; i++) fade("#b" + i, BK(P(t, w(0, "3 体") + i * .22, .55)), 30, .9);
   fade("#nt", E(P(t, w(0, "Claude"), .6)));
-  $("#dim").style.opacity = .82 * E(P(t, c(1) - .1, .6));
-  fade("#q", BK(P(t, c(1) + .15, .7)), 20, .92);
+  hl(".gauge.vpd", t > w(1, "部屋の記録") - .1 && t < w(1, "天気"));
+  hl("#weather", t > w(1, "天気") - .1 && t < ce(1) + .3);
 }"""
         return dash(rec, body, js, cues, total, {})
 
-    # ② 答え 1：少しずつ任せる ----------------------------------------------------
+    # ② 目指すところ ------------------------------------------------------------
     def p2(cues, total):
-        steps = ["手動", "定時", "長さだけ AI", "オート"]
-        say = ["手動", "定時", "長さだけ", "オート"]
-        ladder = "".join(
-            f'<div id="st{i}" style="left:{1200 + i * 160}px;top:{700 - (100 + i * 90)}px;width:146px;height:{100 + i * 90}px;'
-            f"border-radius:12px;background:#1d2721;border:2px solid #34443a;display:flex;align-items:flex-start;justify-content:center;"
-            f'padding-top:14px;font-size:26px;font-weight:700;text-align:center;line-height:1.25">{s}</div>'
-            for i, s in enumerate(steps)
-        )
-        body = f"""
-<div id="k" class="kicker" style="left:1200px;top:110px">答え 1</div>
-<div id="h" class="head" style="left:1200px;top:156px">少しずつ任せる</div>
-{ladder}
-<div id="exp" class="card" style="left:1200px;top:740px;width:630px;height:110px;padding:18px 26px;font-size:30px;font-weight:700">経験<span id="plus" class="num" style="margin-left:18px;color:#f0b45a">＋1 回</span>
-<div class="mut" style="font-size:20px;font-weight:400">入れる前と後の VPD の動き</div></div>
-<div id="cur" style="width:44px;height:44px;border-radius:50%;border:4px solid #f0b45a;background:rgba(240,180,90,.25)"></div>
-<div id="rec" class="chip amber" style="width:560px;font-size:24px">手動・入・30 分（その時の温湿度と VPD）</div>
+        body = """
+<div id="k" class="kicker" style="left:160px;top:120px">目指すところ</div>
+<div id="g0" class="card" style="left:160px;top:250px;width:760px;height:460px;padding:44px 48px">
+  <div class="num" style="font-size:40px;color:#f0b45a">1</div>
+  <div style="font-size:52px;font-weight:700;line-height:1.35;margin-top:10px">天気を先読みして、<br>計画を立てる</div>
+  <div class="mut" style="font-size:24px;margin-top:26px">予報と部屋の記録から、いつ・何分入れるかを決める</div>
+</div>
+<div id="g1" class="card" style="left:1000px;top:250px;width:760px;height:460px;padding:44px 48px">
+  <div class="num" style="font-size:40px;color:#f0b45a">2</div>
+  <div style="font-size:52px;font-weight:700;line-height:1.35;margin-top:10px">人のカンをデータにして、<br>生産を安定させる</div>
+  <div class="mut" style="font-size:24px;margin-top:26px">人が押した 1 回も、効き目の記録として残し、育てる</div>
+</div>
 """
-        js = f"""
-const SAY = {json.dumps(say, ensure_ascii=False)};
-const ROWS = [".controls .mode:nth-of-type(1)", ".controls .mode:nth-of-type(2)", "label[for=timerAi]", ".controls .mode:nth-of-type(3)"];
-let O;
-function setup() {{ O = off(".controls"); }}
-function render(t) {{
-  cam(70, L(40, 70 - O.y, EIO(P(t, .2, 1.4))));
-  fade("#k", E(P(t, c(0), .5))); fade("#h", E(P(t, c(0) + .15, .6)));
-  let lit = -1;
-  for (let i = 0; i < 4; i++) {{
-    const ti = w(1, SAY[i]), k = BK(P(t, ti - .1, .5));
-    fade("#st" + i, Math.max(.25, E(P(t, c(0) + .4 + i * .12, .5)) * .35) + 0 * k, 0);
-    const el = $("#st" + i);
-    el.style.opacity = L(.3, 1, k) * E(P(t, c(0) + .3, .5));
-    el.style.background = k > .01 ? `linear-gradient(180deg, rgba(240,180,90,${{.85 * k}}), rgba(143,192,159,${{.55 * k}}))` : "#1d2721";
-    el.style.color = k > .5 ? "#0d1310" : "#e8efe9";
-    el.style.transform = `translateY(${{(1 - k) * 14}}px)`;
-    if (t >= ti - .1) lit = i;
-  }}
-  ROWS.forEach((r, i) => hl(r, i === lit && t < w(1, "人が押した")));
-  fade("#exp", E(P(t, w(1, "人が押した") - .3, .5)));
-  const tp = w(1, "人が押した"), b = center("#btnOn");
-  const kc = P(t, tp, .3);
-  const cu = $("#cur"); pos(cu, b.x - 22, b.y - 22);
-  cu.style.opacity = kc * (1 - P(t, tp + .9, .3)); cu.style.transform = `scale(${{L(1.6, 1, E(kc))}})`;
-  hl("#btnOn", t > tp && t < tp + 1.0);
-  const ex = $("#exp").getBoundingClientRect();
-  fly("#rec", {{ x: b.x + 150, y: b.y + 60 }}, {{ x: ex.left + 40, y: ex.top - 70 }}, P(t, tp + .5, 1.3));
-  const arrive = P(t, tp + 1.8, .4);
-  $("#rec").style.opacity = cl(P(t, tp + .5, .25)) * (1 - arrive);
-  fade("#plus", BK(arrive), 10, .6);
-  $("#exp").style.borderColor = arrive > 0 && arrive < 1 ? "#f0b45a" : "#2e3a32";
-}}"""
-        return dash(rec, body, js, cues, total, {})
+        js = """
+function render(t) {
+  fade("#k", E(P(t, .1, .5)));
+  fade("#g0", BK(P(t, w(0, "天気") - .2, .7)), 40, .94);
+  fade("#g1", BK(P(t, w(1, "カン") - .3, .7)), 40, .94);
+  $("#g0").style.borderColor = t < c(1) && t > w(0, "天気") ? "#f0b45a" : "#2e3a32";
+  $("#g1").style.borderColor = t > w(1, "カン") ? "#f0b45a" : "#2e3a32";
+}"""
+        return plain(body, js, cues, total, {})
 
-    # ③ 答え 2：根拠 ----------------------------------------------------------
+    # ③ 先読みして決める（11/5 15:04 の本物の答え） ---------------------------------
     def p3(cues, total):
         X = 1180
         body = f"""
-<div id="k" class="kicker" style="left:{X}px;top:60px">答え 2</div>
-<div id="h" class="head" style="left:{X}px;top:100px;font-size:50px">根拠を持って決める</div>
+<div id="k" class="kicker" style="left:{X}px;top:60px">目指すところ 1</div>
+<div id="h" class="head" style="left:{X}px;top:100px;font-size:50px">先を読んで決める</div>
 <div id="cap" class="mut" style="left:{X}px;top:186px;font-size:24px">11/5 15:04 の回（本物の答え）</div>
 <div id="c1" class="chip" style="width:680px">14:54 の VPD <b class="num">0.851</b> kPa<span class="mut">（帯 0.4〜0.8 の上）</span></div>
 <div id="c2" class="chip" style="width:680px">経験：秋の傾向 <b class="num">26</b> 回・15 分で <b class="num">−0.238</b></div>
@@ -507,7 +531,7 @@ function render(t) {{
   <div id="bar" style="position:absolute;left:0;top:0;height:96px;width:680px;border-radius:12px;background:#2a3a30;border:2px solid #4a5c50"></div>
   <div id="barl" style="position:absolute;left:24px;top:22px;font-size:34px;font-weight:700;white-space:nowrap">定時の 60 分</div>
 </div>
-<div id="c3" class="chip" style="width:680px">夜は雨の予報<span class="mut">（18 時の降水確率 60%）</span></div>
+<div id="c3" class="chip" style="width:680px">夜は雨の予報<span class="mut">（18 時の降水確率 60%）</span> → 長くはしない</div>
 <div id="c4" class="chip amber" style="width:680px;font-size:26px">「外の天気がこの部屋にどれだけ効くかの行は経験に無いので、<span id="mk" class="mark">これは推測</span>」</div>
 """
         js = f"""
@@ -518,111 +542,118 @@ function setup() {{
 }}
 function render(t) {{
   const yT = 330 - OT.y, yG = 80 - OG.y, yE = 300 - OE.y;
-  const tv = w(2, "VPD") - .7, ta = w(2, "秋の") - .6, td = w(2, "だから") - .5;
+  const tv = w(1, "VPD") - .7, ta = w(1, "秋の") - .6, td = w(1, "だから") - .5;
   cam(70, track(t, [[0, yT], [tv, yG], [ta, yE], [td, yT]]));
-  fade("#k", E(P(t, c(0), .5))); fade("#h", E(P(t, c(0) + .15, .6))); fade("#cap", E(P(t, c(0) + .5, .6)));
-  hl(".controls .mode:nth-of-type(2)", t > c(1) && t < tv);
-  hl("label[for=timerAi]", t > w(1, "何分") && t < tv);
-  hl(".gauge.vpd", t > w(2, "VPD") - .2 && t < ta);
-  hl("#expTable tbody tr:nth-child(2)", t > w(2, "26") - .3 && t < td);
+  fade("#k", E(P(t, .1, .5))); fade("#h", E(P(t, .25, .6))); fade("#cap", E(P(t, .6, .6)));
+  hl(".controls .mode:nth-of-type(2)", t > .3 && t < tv);
+  hl("label[for=timerAi]", t > w(0, "何分") && t < tv);
+  hl(".gauge.vpd", t > w(1, "VPD") - .2 && t < ta);
+  hl("#expTable tbody tr:nth-child(2)", t > w(1, "26") - .3 && t < td);
   hl("#timerWhy", t > td + .9);
-  const g = center(".gauge.vpd");
-  fly("#c1", g, {{ x: X, y: 230 }}, P(t, w(2, "0.851"), 1.0));
-  const r = center("#expTable tbody tr:nth-child(2)");
-  fly("#c2", r, {{ x: X, y: 350 }}, P(t, w(2, "26"), 1.0));
+  fly("#c1", center(".gauge.vpd"), {{ x: X, y: 230 }}, P(t, w(1, "0.851"), 1.0));
+  fly("#c2", center("#expTable tbody tr:nth-child(2)"), {{ x: X, y: 350 }}, P(t, w(1, "26"), 1.0));
   fade("#barbox", E(P(t, td - .2, .5)));
-  const sh = EIO(P(t, w(2, "20"), .9));
+  const sh = EIO(P(t, w(1, "20"), .9));
   $("#bar").style.width = L(680, 680 * 20 / 60, sh) + "px";
   $("#bar").style.background = sh > 0 ? `rgba(240,180,90,${{L(.15, .9, sh)}})` : "#2a3a30";
   $("#barl").textContent = sh > .5 ? "AI の分：20 分" : "定時の 60 分";
   $("#barl").style.left = (sh > .5 ? 680 * 20 / 60 + 24 : 24) + "px";
-  fade("#c3", E(P(t, w(3, "天気"), .6))); pos("#c3", X, 600);
-  fade("#c4", E(P(t, w(3, "経験に無い") - .3, .6))); pos("#c4", X, 720);
-  $("#mk").style.setProperty("--m", (100 * E(P(t, w(3, "推測") - .1, .7))) + "%");
+  fade("#c3", E(P(t, w(2, "雨") - .3, .6))); pos("#c3", X, 600);
+  fade("#c4", E(P(t, w(2, "経験に無い") - .3, .6))); pos("#c4", X, 720);
+  $("#mk").style.setProperty("--m", (100 * E(P(t, w(2, "推測") - .1, .7))) + "%");
 }}"""
         return dash(rec, body, js, cues, total, {}, patch=timer_patch)
 
-    # ④ 3 体のチーム ------------------------------------------------------------
+    # ④ カンがデータになり、育つ（再生の分析役の本物の書き直し） -------------------------
     def p4(cues, total):
         lock = (
-            '<svg width="30" height="34" viewBox="0 0 30 34" style="vertical-align:-5px;margin-right:8px">'
+            '<svg width="28" height="32" viewBox="0 0 30 34" style="vertical-align:-5px;margin-right:8px">'
             '<rect x="3" y="14" width="24" height="18" rx="4" fill="#f0b45a"/>'
             '<path d="M8 14V10a7 7 0 0 1 14 0v4" stroke="#f0b45a" stroke-width="4" fill="none"/></svg>'
         )
-
-        def card(i, x, model, role, sess):
-            return (
-                f'<div id="a{i}" class="card" style="left:{x}px;top:300px;width:440px;height:250px">'
-                f'<div class="mut" style="font-size:24px">{sess}</div>'
-                f'<div style="font-size:52px;font-weight:700;margin:6px 0 4px">{role}</div>'
-                f'<div class="num" style="font-size:30px;color:#8fc09f">{model}</div>'
-                f'<div id="lk{i}" style="position:absolute;left:30px;top:196px;font-size:24px;color:#f0b45a">{lock}読むだけ</div></div>'
-            )
-
+        rows = [
+            ("11/5 13:15", "手動・入 60 分", "60 分で 0.925 → 0.793", True),
+            ("10/21 15:03", "オート・入 30 分", "15 分で −0.154", False),
+            ("10/22 11:30", "オート・入 15 分", "15 分で −0.128", False),
+            ("10/22 18:05", "オート・入 60 分", "15 分で −0.093", False),
+            ("10/23 12:05", "オート・入 60 分", "15 分で −0.137", False),
+            ("10/23 15:05", "オート・入 90 分", "15 分で −0.137", False),
+        ]
+        rh = "".join(
+            f"<div id=\"r{i}\" style=\"position:absolute;left:36px;top:{150 + i * 50}px;width:980px;font:26px/1.6 'IBM Plex Mono','Zen Kaku Gothic New',monospace;"
+            f'color:{"#f0b45a" if hum else "#cfe3d4"}">{a}　{b}　<span class="mut">{c}</span></div>'
+            for i, (a, b, c, hum) in enumerate(rows)
+        )
         body = f"""
-<div id="k" class="kicker" style="left:140px;top:80px">オートの中身</div>
-<div id="h" class="head" style="left:140px;top:126px">3 体のチーム</div>
-<div id="clk" style="left:1560px;top:80px;width:150px;height:150px;border-radius:50%;border:5px solid #8fc09f">
-  <div id="hand" style="position:absolute;left:69px;top:16px;width:6px;height:58px;background:#f0b45a;border-radius:3px;transform-origin:3px 58px"></div>
+<div id="k" class="kicker" style="left:120px;top:60px">目指すところ 2</div>
+<div id="h" class="head" style="left:120px;top:100px;font-size:50px">カンがデータになり、経験が育つ</div>
+<div id="book" class="card" style="left:120px;top:200px;width:1080px;height:700px;padding:0">
+  <div style="position:absolute;left:36px;top:26px;font-size:30px;font-weight:700">経験<span class="mut" style="font-size:22px;font-weight:400;margin-left:14px">効き目の表（入れる前と後の動き）</span></div>
+  <div style="position:absolute;left:36px;top:84px;width:1000px;border-top:2px solid #2e3a32"></div>
+  {rh}
+  <div id="trend" style="position:absolute;left:36px;top:470px;font-size:30px">秋の傾向　<b id="tn" class="num" style="font-size:52px;color:#f0b45a">24</b> 回</div>
+  <div id="wx" style="position:absolute;left:36px;top:560px;font-size:28px">外の天気の節　外と部屋の湿度の相関 r ＝ <b id="rv" class="num" style="color:#7fb3d4">0.23</b>
+    <span id="unk" style="margin-left:18px;border:3px solid #ef7d6f;color:#ef7d6f;border-radius:8px;padding:2px 12px;font-weight:700;display:inline-block">まだ分からない</span></div>
+  <div id="fix" style="position:absolute;left:36px;top:630px;font-size:26px">10/23 14:00 の回　60 分：<span id="old" style="position:relative">途中<span id="strike" style="position:absolute;left:0;top:52%;height:4px;background:#ef7d6f"></span></span>
+    <span id="new" style="color:#6cc28b;font-weight:700;margin-left:12px">→ −0.026（確定）</span></div>
 </div>
-<div id="clkl" style="left:1730px;top:130px;font-size:30px;font-weight:700">3 時間ごと</div>
-{card(0, 140, "Sonnet 5.5", "分析役", "振り返りのセッション")}
-{card(1, 740, "Opus 5.5", "制御役", "計画のセッション")}
-{card(2, 1340, "Haiku 5.5", "専門家", "栽培の知識")}
-<div id="ar1" style="left:590px;top:420px;width:140px;height:6px;background:#8fc09f;border-radius:3px"></div>
-<div id="ask" class="chip" style="left:1190px;top:330px;width:140px;padding:8px 12px;font-size:22px;text-align:center">聞く →</div>
-<div id="ans" class="chip" style="left:1190px;top:450px;width:140px;padding:8px 12px;font-size:22px;text-align:center">← 答え</div>
-<div id="book" class="card" style="left:140px;top:600px;width:440px;height:200px">
-  <div style="font-size:32px;font-weight:700">経験</div>
-  <div class="mut" style="font-size:22px">操作の前後で VPD がどう動いたか</div>
-  <div id="l0" style="position:absolute;left:30px;top:122px;height:6px;background:#8fc09f;border-radius:3px"></div>
-  <div id="l1" style="position:absolute;left:30px;top:146px;height:6px;background:#8fc09f;border-radius:3px"></div>
-  <div id="l2" style="position:absolute;left:30px;top:170px;height:6px;background:#8fc09f;border-radius:3px"></div>
+<div id="hu" class="chip amber" style="width:460px;font-size:26px">人がスイッチを押した 1 回</div>
+<div id="an" class="card" style="left:1280px;top:200px;width:520px;height:250px">
+  <div class="mut" style="font-size:22px">振り返り・3 時間ごと</div>
+  <div style="font-size:46px;font-weight:700;margin:4px 0">分析役</div>
+  <div class="num" style="font-size:28px;color:#8fc09f">Sonnet 5.5</div>
+  <div style="position:absolute;left:30px;top:190px;font-size:24px;color:#6cc28b">経験を書ける ・ 書き直し <b id="vn" class="num">0</b> 回</div>
 </div>
-<div id="rd" style="left:590px;top:690px;width:150px;border-top:4px dashed #f0b45a"></div>
-<div id="plan" class="chip amber" style="left:760px;top:620px;width:400px;font-size:30px;font-weight:700">計画 → 守りの層へ</div>
-<div id="cost" style="left:1340px;top:620px;width:440px">
-  <div style="font-size:26px" class="mut">1 回の起動</div>
-  <div style="font-size:64px;font-weight:700">約 <span id="cn" class="num">0</span>¢</div>
-  <div class="mut" style="font-size:20px">振り返り {cost["review"]:g}¢＋計画 {cost["plan"]:g}¢（11/4 の記録）</div>
+<div id="ct" class="card" style="left:1280px;top:560px;width:520px;height:260px">
+  <div class="mut" style="font-size:22px">計画</div>
+  <div style="font-size:46px;font-weight:700;margin:4px 0">制御役</div>
+  <div class="num" style="font-size:28px;color:#8fc09f">Opus 5.5</div>
+  <div style="position:absolute;left:30px;top:204px;font-size:24px;color:#f0b45a">{lock}読むだけ（書き換えられない）</div>
 </div>
-<div id="nt" class="mut" style="left:140px;top:850px;font-size:20px">図：本番は Claude Console のセッションの録画を重ねる</div>
+<div id="rd" style="left:1200px;top:670px;width:80px;border-top:4px dashed #f0b45a"></div>
+<div id="nt" class="mut" style="left:120px;top:910px;font-size:20px">11/5 の行＝本物の手動の操作 ・ ほか＝秋の記録で再生した 4 日間（10/20〜10/23）に、分析役が自分で書いた行</div>
 """
         js = """
 function render(t) {
-  fade("#k", E(P(t, .1, .5))); fade("#h", E(P(t, .25, .6))); fade("#nt", E(P(t, .6, .6)));
-  for (let i = 0; i < 3; i++) fade("#a" + i, E(P(t, .3 + i * .15, .6)), 30);
-  const t3 = w(0, "3 時間ごと");
-  fade("#clk", E(P(t, t3 - .3, .4)), 0, .8); fade("#clkl", E(P(t, t3 - .2, .4)));
-  $("#hand").style.transform = `rotate(${90 * EIO(P(t, t3, 1.2))}deg)`;
-  const glow = (i, a, b) => { $("#a" + i).style.borderColor = t > a && t < b ? "#f0b45a" : "#2e3a32"; };
-  const ts = w(0, "Sonnet"), tw = w(0, "経験を書き直す");
-  glow(0, ts - .1, c(1));
-  fade("#book", E(P(t, ts + .3, .5)));
-  [0, 1, 2].forEach(i => { $("#l" + i).style.width = (380 * [1, .8, .6][i] * EIO(P(t, tw + i * .35, .5))) + "px"; });
-  const ta = c(1);
-  $("#ar1").style.opacity = E(P(t, ta - .2, .4)); $("#ar1").style.transformOrigin = "0 0";
-  $("#ar1").style.transform = `scaleX(${EIO(P(t, ta - .2, .6))})`;
-  glow(1, ta, ce(1) + .3);
-  const th = w(1, "Haiku");
-  fade("#ask", E(P(t, th, .4)), 0); fade("#ans", E(P(t, th + .8, .4)), 0);
-  glow(2, th + .2, th + 1.4);
-  fade("#plan", BK(P(t, w(1, "計画"), .6)), 20, .9);
-  const tl = c(2);
-  fade("#rd", E(P(t, tl, .5)), 0);
-  fade("#lk0", 0); fade("#lk1", BK(P(t, tl + .4, .5)), 8, .6); fade("#lk2", BK(P(t, tl + .6, .5)), 8, .6);
-  glow(0, w(2, "分析役") - .1, w(2, "1 回"));
-  const tc = w(2, "1 回");
-  fade("#cost", E(P(t, tc - .3, .5)));
-  $("#cn").textContent = Math.round(L(0, 10, E(P(t, tc, 1.0))));
+  fade("#k", E(P(t, .1, .5))); fade("#h", E(P(t, .25, .6))); fade("#book", E(P(t, .3, .6)), 20);
+  fade("#nt", E(P(t, .8, .6)));
+  // 人の 1 回が表の 1 行になる
+  const t0 = w(0, "1 回") - .2;
+  const r0 = $("#r0").getBoundingClientRect();
+  fly("#hu", { x: 1540, y: 300 }, { x: r0.left, y: r0.top - 6 }, P(t, t0, 1.2));
+  $("#hu").style.opacity = cl(P(t, t0, .2)) * (1 - P(t, t0 + 1.2, .3));
+  fade("#r0", E(P(t, t0 + 1.1, .4)), 0);
+  // 分析役が書き足していく
+  fade("#an", E(P(t, w(1, "Sonnet") - .3, .5)), 20);
+  const t2 = c(2), d2 = ce(2) - c(2);
+  for (let i = 1; i < 6; i++) fade("#r" + i, E(P(t, t2 + (i - 1) * d2 * .14, .35)), 0);
+  const g = EIO(P(t, t2, d2 * .75));
+  fade("#trend", E(P(t, t2 - .2, .4)), 0);
+  $("#tn").textContent = Math.round(L(24, 34, g));
+  $("#vn").textContent = Math.round(L(0, 32, EIO(P(t, w(1, "振り返り"), ce(2) - w(1, "振り返り")))));
+  $("#an").style.borderColor = t > w(1, "Sonnet") && t < ce(3) ? "#6cc28b" : "#2e3a32";
+  const tw = w(2, "外の天気");
+  fade("#wx", E(P(t, tw - .3, .5)), 0);
+  const rs = [.23, .46, .49, .47, .58], k = P(t, tw, 2.4);
+  $("#rv").textContent = rs[Math.min(4, Math.floor(k * 4.999))].toFixed(2);
+  const tu = w(2, "まだ分からない");
+  const su = $("#unk"); su.style.opacity = cl(P(t, tu - .2, .2)); su.style.transform = `rotate(-6deg) scale(${L(2.2, 1, BK(P(t, tu - .2, .45)))})`;
+  // 書き間違いを直す
+  const tf = c(3);
+  fade("#fix", E(P(t, tf - .1, .4)), 0);
+  $("#strike").style.width = (100 * EIO(P(t, tf + .6, .5))) + "%";
+  $("#new").style.opacity = E(P(t, tf + 1.1, .4));
+  // 制御役は読むだけ
+  const tc = w(4, "Opus") - .2;  // 制御役
+  fade("#ct", E(P(t, tc, .5)), 20); fade("#rd", E(P(t, w(4, "読むだけ") - .2, .4)), 0);
 }"""
         return plain(body, js, cues, total, {})
 
-    # ⑤ 答え 3：越えられない壁 -----------------------------------------------------
+    # ⑤ 越えられない壁 ------------------------------------------------------------
     def p5(cues, total):
         tail = rec["pytest"][-1:]
         body = f"""
-<div id="k" class="kicker" style="left:140px;top:80px">答え 3</div>
+<div id="k" class="kicker" style="left:140px;top:80px">安全</div>
 <div id="h" class="head" style="left:140px;top:126px">越えられない壁</div>
 <div id="dia" style="left:0;top:0;width:1920px;height:1080px">
   <div id="ai" class="card" style="position:absolute;left:160px;top:330px;width:300px;height:200px;text-align:center;padding-top:40px">
@@ -635,7 +666,7 @@ function render(t) {
     <div style="position:absolute;left:24px;top:330px;font-size:21px;line-height:1.75;color:#cfd9d1">連続 60 分まで<br>1 日 120 分まで<br>古い値で動かさない<br>15 分で湿度が上がらなければ切る<br><b style="color:#ef7d6f">「止める」が最優先</b></div>
   </div>
   <div id="plug" class="card" style="position:absolute;left:1480px;top:330px;width:300px;height:200px;text-align:center;padding-top:40px">
-    <div style="font-size:44px;font-weight:700">プラグ</div><div class="mut" style="font-size:24px">SwitchBot → 加湿器</div></div>
+    <div style="font-size:44px;font-weight:700">加湿器</div><div class="mut" style="font-size:24px">受け手だけが動かす</div></div>
   <div id="pa" class="chip red" style="position:absolute;width:250px;font-size:28px;font-weight:700">入 90 分</div>
   <div id="no" class="chip red" style="position:absolute;width:330px;font-size:22px">断った：連続 60 分まで</div>
   <div id="pb" class="chip" style="position:absolute;width:250px;font-size:28px;font-weight:700">入 20 分</div>
@@ -656,22 +687,18 @@ function render(t) {
   $("#direct").style.opacity = E(P(t, .6, .5)) * (1 - P(t, wallIn, .4));
   fade("#x", BK(P(t, tx - .2, .5)) * (1 - P(t, wallIn, .4)), 0, .5);
   fade("#wall", BK(P(t, wallIn, .6)), 0, .85);
-  // 上限を越える計画が当たって跳ね返る
   const ta = w(1, "計画は") + .2, hit = ta + 1.2;
   const a = P(t, ta, 1.2);
   const shake = t > hit && t < hit + .5 ? Math.sin((t - hit) * 60) * 10 * (1 - (t - hit) / .5) : 0;
   pos("#pa", L(470, 560, EIO(a)) + shake, 300); $("#pa").style.opacity = cl(a * 5) * (1 - P(t, w(1, "断られたら") + .2, .3));
   $("#wall").style.borderColor = t > hit && t < w(1, "返ります") + .3 ? "#ef7d6f" : (t > w(1, "返ります") + 1.4 && t < w(1, "返ります") + 2.4 ? "#6cc28b" : "#2e3a32");
-  const tn = w(1, "断られたら");
-  const n = P(t, tn, 1.1);
+  const n = P(t, w(1, "断られたら"), 1.1);
   pos("#no", L(780, 300, EIO(n)), 560); $("#no").style.opacity = cl(n * 5) * (1 - P(t, c(2) + .4, .4));
-  // 直した計画が壁を抜けてプラグへ
   const tb = w(1, "返ります") + .5, b = P(t, tb, 1.8);
   pos("#pb", L(470, 1500, EIO(b)), 300); $("#pb").style.opacity = cl(b * 5) * (1 - P(t, tb + 2.2, .3));
   const on = P(t, tb + 1.8, .3);
   $("#plug").style.borderColor = on > 0 ? "#6cc28b" : "#2e3a32";
   $("#plug").style.boxShadow = `0 0 ${60 * on}px rgba(108,194,139,${.6 * on})`;
-  // ランダムなテスト
   const tt = Math.max(c(2) + .6, tb + 2.2);
   $("#dia").style.opacity = 1 - .8 * P(t, tt, .5);
   fade("#term", E(P(t, tt, .6)), 40);
@@ -680,62 +707,99 @@ function render(t) {
 }"""
         return plain(body, js, cues, total, {})
 
-    # ⑥ 誰に効くか ------------------------------------------------------------
+    # ⑥ 結果：帯の中に保てた時間（再生の比較の表） -----------------------------------
     def p6(cues, total):
-        dots = "".join(
-            f'<div class="dot" style="position:absolute;left:{180 + (i % 32) * 49}px;top:{560 + (i // 32) * 49}px;width:22px;height:22px;border-radius:50%;background:#26302a"></div>'
-            for i in range(32 * 6)
-        )
-        parts = [
-            ("ラズパイ", "温湿度を記録する"),
-            ("SwitchBot のプラグ", "加湿器を入れる・切る"),
-            ("Claude の API", "1 回 10〜19¢ × 1 日 8 回"),
-        ]
-        cards = "".join(
-            f'<div id="p{i}" class="card" style="left:{140 + i * 560}px;top:300px;width:520px;height:190px">'
-            f'<div style="font-size:42px;font-weight:700">{a}</div><div class="mut" style="font-size:26px;margin-top:10px">{b}</div></div>'
-            for i, (a, b) in enumerate(parts)
-        )
+        names = ["実運転", "閾値だけ", "1 体", "チーム"]
+        tb = rec["replay"]
+
+        def group(season, x0, gid):
+            bars = ""
+            for i, n in enumerate(names):
+                v = tb[season][n]
+                col = "#f0b45a" if n == "チーム" else ("#8fc09f" if n == "実運転" else "#4a5c50")
+                bars += (
+                    f'<div style="position:absolute;left:{x0 + i * 170}px;top:780px;width:120px;text-align:center;font-size:24px" class="mut">{n}</div>'
+                    f'<div class="bar {gid}" data-v="{v}" style="position:absolute;left:{x0 + i * 170}px;width:120px;top:770px;height:0;background:{col};border-radius:10px 10px 0 0"></div>'
+                    f'<div class="val {gid}" data-v="{v}" style="position:absolute;left:{x0 + i * 170}px;width:120px;text-align:center;font-size:30px;font-weight:700" class="num">{v:g}</div>'
+                )
+            return bars
+
         body = f"""
-<div id="k" class="kicker" style="left:140px;top:80px">誰に効くか</div>
-<div id="h" class="head" style="left:140px;top:126px">要るのは、これだけ</div>
-{cards}
-<div id="tag" style="left:1380px;top:200px;font-size:40px;font-weight:700;color:#0d1310;background:#f0b45a;border-radius:14px;padding:10px 26px;transform-origin:50% 50%">1 日 1 ドルほど</div>
-<div id="h2" class="head" style="left:140px;top:420px;font-size:50px">決まりを書けない小さな現場でも、少しずつ任せられる</div>
-<div id="dots" style="left:0;top:0">{dots}</div>
+<div id="k" class="kicker" style="left:160px;top:80px">結果</div>
+<div id="h" class="head" style="left:160px;top:124px">狙いの帯の中に保てた時間</div>
+<div id="cap" class="mut" style="left:160px;top:210px;font-size:24px">同じ 4 日（96 時間）を、4 通りで流し直した（時間）</div>
+<div id="sa" style="left:160px;top:250px;width:700px;font-size:40px;font-weight:700">秋</div>
+<div id="su" style="left:1000px;top:250px;width:700px;font-size:40px;font-weight:700">夏</div>
+<div id="ga">{group("秋", 160, "ga")}</div>
+<div id="gs">{group("夏", 1000, "gs")}</div>
+<div id="base" style="left:140px;top:770px;width:1640px;border-top:2px solid #4a5c50"></div>
+<div id="na" class="chip amber" style="left:330px;top:250px;width:520px;font-size:24px">チームが、実運転より長く保った</div>
+<div id="ns" class="chip red" style="left:1170px;top:250px;width:520px;font-size:24px">チームは、実運転に届かなかった</div>
+<div id="nt" class="mut" style="left:160px;top:815px;font-size:20px">再生＝本物の記録に、加湿器を入れた差だけを模擬の式で足した部屋（実運転は記録そのもの）・先の記録は渡さない</div>
+<div id="wt" class="chip amber" style="left:310px;top:852px;width:1300px;font-size:27px;text-align:center;padding:8px 22px">夏 9/3：土の水分を見て「水やりを控えて」　→　人が記録に書いたのは 9/19</div>
 """
         js = """
+function grow(cls, k) {
+  $$(".bar." + cls).forEach(b => { const hh = 420 * b.dataset.v / 96 * EIO(k); b.style.height = hh + "px"; b.style.top = (770 - hh) + "px"; });
+  $$(".val." + cls).forEach(b => { b.style.top = (770 - 420 * b.dataset.v / 96 * EIO(k) - 44) + "px"; b.style.opacity = P(k, .7, .3); });
+}
 function render(t) {
-  const up = EIO(P(t, c(1) - .2, .8));
-  fade("#k", E(P(t, .1, .5)));
-  fade("#h", E(P(t, .25, .6)) * (1 - up));
-  const say = ["ラズパイ", "SwitchBot", "API"];
-  for (let i = 0; i < 3; i++) {
-    const k = BK(P(t, w(0, say[i]) - .15, .6));
-    const el = $("#p" + i);
-    el.style.opacity = E(P(t, w(0, say[i]) - .15, .4)) * (1 - .7 * up);
-    el.style.top = L(300, 190, up) + "px";
-    el.style.transform = `translateY(${(1 - k) * 40}px) scale(${L(1, .82, up)})`;
-    el.style.transformOrigin = "0 0";
-  }
-  const tg = BK(P(t, w(0, "1 日"), .6));
-  $("#tag").style.opacity = cl(tg) * (1 - up); $("#tag").style.transform = `rotate(-4deg) scale(${L(.6, 1, tg)})`;
-  fade("#h2", E(P(t, c(1), .7)));
-  const t0 = w(1, "小さな現場") - .4;
-  $$(".dot").forEach((d, i) => {
-    const col = i % 32, row = Math.floor(i / 32);
-    const k = E(P(t, t0 + col * .07 + row * .05 + ((i * 37) % 11) * .03, .5));
-    d.style.background = k > 0 ? `rgba(240,180,90,${L(.15, 1, k)})` : "#26302a";
-    d.style.boxShadow = `0 0 ${18 * k}px rgba(240,180,90,${.55 * k})`;
-    d.style.opacity = E(P(t, c(1) + .1, .6));
-  });
+  fade("#k", E(P(t, .1, .5))); fade("#h", E(P(t, .25, .6))); fade("#cap", E(P(t, .5, .6)));
+  fade("#base", E(P(t, .4, .5)), 0); fade("#sa", E(P(t, .5, .5))); fade("#su", E(P(t, .6, .5))); fade("#nt", E(P(t, .8, .5)));
+  grow("ga", P(t, w(1, "秋は") - .3, 1.4));
+  grow("gs", P(t, w(1, "夏は") - .3, 1.4));
+  fade("#na", BK(P(t, w(1, "長く"), .5)), 10, .9);
+  fade("#ns", BK(P(t, w(1, "届いて"), .5)), 10, .9);
+  const tw = c(2) - .2;
+  ["#ga", "#gs", "#sa", "#su", "#base", "#na", "#ns"].forEach(s => { $(s).style.filter = `brightness(${1 - .55 * P(t, tw, .5)})`; });
+  fade("#wt", BK(P(t, tw, .6)), 20, .92);
 }"""
         return plain(body, js, cues, total, {})
 
-    # ⑦ 締め ------------------------------------------------------------
+    # ⑦ 道：今・次・最終 ------------------------------------------------------------
     def p7(cues, total):
+        nodes = [
+            ("今", "加湿", "本物・動いている", "#f0b45a", "solid"),
+            ("次", "水やり・温度・換気", "同じ仕組みで広げる", "#8fc09f", "solid"),
+            ("最終", "収量と品質の予測", "育て方の記録から先読みする", "#f3e6c4", "dashed"),
+        ]
+        cards = "".join(
+            f'<div id="n{i}" class="card" style="left:{160 + i * 560}px;top:360px;width:500px;height:300px;border:3px {st} {col}">'
+            f'<div class="kicker" style="position:static;color:{col}">{a}</div>'
+            f'<div style="font-size:42px;font-weight:700;margin-top:18px;line-height:1.25;white-space:nowrap">{b}</div>'
+            f'<div class="mut" style="font-size:26px;margin-top:18px">{c}</div></div>'
+            for i, (a, b, c, col, st) in enumerate(nodes)
+        )
+        body = f"""
+<div id="k" class="kicker" style="left:160px;top:120px">これから</div>
+<div id="h" class="head" style="left:160px;top:166px">加湿器 1 台から、作物の出来まで</div>
+<div id="path" style="left:160px;top:510px;width:1600px;height:6px;background:#34443a;border-radius:3px;transform-origin:0 0"></div>
+{cards}
+"""
+        js = """
+function render(t) {
+  fade("#k", E(P(t, .1, .5))); fade("#h", E(P(t, .25, .6)));
+  $("#path").style.transform = `scaleX(${EIO(P(t, .3, ce(1) - .3))})`;
+  fade("#n0", BK(P(t, w(0, "いま") - .1, .6)), 30, .92);
+  fade("#n1", BK(P(t, w(0, "次は") - .1, .6)), 30, .92);
+  fade("#n2", BK(P(t, w(1, "収量") - .4, .7)), 30, .92);
+  $("#n1").style.opacity = Math.min(parseFloat($("#n1").style.opacity), .75);
+  const g = P(t, w(1, "収量"), 1.2);
+  $("#n2").style.boxShadow = `0 0 ${70 * E(g)}px rgba(243,230,196,${.35 * E(g)})`;
+}"""
+        return plain(body, js, cues, total, {})
+
+    # ⑧ 締め：作り方 → 暗がりのスイッチ（実写） → 題 ---------------------------------
+    def p8(cues, total):
         log = rec["gitlog"]
         lines = "".join(f"<div>{esc(x[:64])}</div>" for x in log)
+        end = rec.get("ending")
+        vid = (
+            f'<video id="vid" src="{end["uri"]}" muted preload="auto" playsinline '
+            'style="left:0;top:0;width:1920px;height:1080px;object-fit:cover;opacity:0;z-index:1"></video>'
+            if end
+            else ""
+        )
         body = f"""
 <div id="k" class="kicker" style="left:140px;top:80px">作り方</div>
 <div id="h" class="head" style="left:140px;top:126px">6 日間、Claude Code と</div>
@@ -743,23 +807,31 @@ function render(t) {
 <div id="term" style="left:140px;top:250px;width:1640px;height:600px;background:#070a08;border:2px solid #2e3a32;border-radius:18px;overflow:hidden">
   <div id="lines" style="position:absolute;left:40px;top:30px;font:26px/1.6 'IBM Plex Mono','Zen Kaku Gothic New',monospace;color:#cfe3d4;white-space:pre">{lines}</div>
 </div>
-<div id="night" class="mut" style="left:1500px;top:60px;font-size:22px;z-index:2">本番：ここで暗がりの実写に戻る</div>
-<div id="ttl" style="left:0;top:380px;width:1920px;text-align:center;z-index:2">
+{vid}
+<div id="ttl" style="left:0;top:380px;width:1920px;text-align:center;z-index:2;text-shadow:0 4px 30px #000">
   <div style="font-size:96px;font-weight:700;letter-spacing:.12em">栽培室の頭脳</div>
   <div class="mut" style="font-size:34px;margin-top:24px;letter-spacing:.1em">Built with Claude: Japan 2026</div>
 </div>
 """
-        js = """
-function render(t) {
+        js = f"""
+const FROM = {end["from"] if end else 0};
+async function render(t) {{
   fade("#k", E(P(t, .1, .5))); fade("#h", E(P(t, .25, .6))); fade("#cnt", E(P(t, .6, .6)));
   fade("#term", E(P(t, .3, .6)), 30);
   const el = $("#lines"), over = Math.max(0, el.offsetHeight - 540);
-  el.style.transform = `translateY(${-over * EIO(P(t, .8, ce(0) - .8))}px)`;
-  const blk = P(t, c(1) - .3, .7);
-  $("#v-black").style.opacity = blk;
-  $("#night").style.opacity = blk * (1 - P(t, ce(1) + .2, .4));
+  el.style.transform = `translateY(${{-over * EIO(P(t, .8, ce(0) - .8))}}px)`;
+  const tv = c(1) - .5;
+  const off = 1 - P(t, tv, .6);
+  ["#k", "#h", "#cnt", "#term"].forEach(s => {{ $(s).style.opacity = parseFloat($(s).style.opacity || 1) * off; }});
+  const v = $("#vid");
+  if (v) {{
+    v.style.opacity = E(P(t, tv, .8)) * (1 - .55 * P(t, ce(1) + .3, .8));
+    if (t >= tv) await seek(v, FROM + (t - tv));
+  }} else {{
+    $("#v-black").style.opacity = P(t, tv, .7);
+  }}
   fade("#ttl", E(P(t, ce(1) + .5, 1.0)), 16);
-}"""
+}}"""
         return plain(body, js, cues, total, {})
 
     return {
@@ -774,6 +846,7 @@ function render(t) {
         "⑤": p5,
         "⑥": p6,
         "⑦": p7,
+        "⑧": p8,
     }
 
 
@@ -805,6 +878,20 @@ def sdr(src: Path) -> Path:
         capture_output=True,
     )
     return out
+
+
+def ending_clip() -> dict | None:
+    """締めの実写（opening.json の "ending"）を、画面の中で送れる mp4（音なし）にする。"""
+    if not OPENING.exists():
+        return None
+    e = json.loads(OPENING.read_text()).get("ending")
+    if not e:
+        return None
+    src = sdr(ROOT / "video" / "assets" / e["clip"])
+    mp4 = src.with_suffix(".mp4")
+    if not mp4.exists() or mp4.stat().st_mtime < src.stat().st_mtime:
+        ff("-i", str(src), "-an", "-c:v", "copy", "-movflags", "+faststart", str(mp4))
+    return {"uri": mp4.as_uri(), "from": e["from"]}
 
 
 def opening_parts(fps: int) -> list[dict] | None:
@@ -938,7 +1025,7 @@ def main() -> None:
     ap.add_argument("--stills", action="store_true", help="各行の終わりの絵だけ撮る")
     ap.add_argument("--fps", type=int, default=30)
     ap.add_argument("--voice", type=int, default=VOICE_ID, help="AivisSpeech の声（スタイル ID）")
-    ap.add_argument("--speed", type=float, default=1.05)
+    ap.add_argument("--speed", type=float, default=1.1)
     ap.add_argument("--bgm-db", type=float, default=-12.0, help="BGM の大きさ（声の無い所・dB）")
     ap.add_argument("--no-bgm", action="store_true")
     args = ap.parse_args()
@@ -949,6 +1036,7 @@ def main() -> None:
     print("声：", "AivisSpeech" if use_aivis else "say（AivisSpeech が動いていない）")
     scenes = read_script()
     rec = load_records()
+    rec["ending"] = ending_clip()
     pages = scene_pages(rec)
     keys = [k for k in ORDER if not args.only or k in args.only]
     opening = opening_parts(args.fps) if "O" in keys else None
@@ -996,7 +1084,7 @@ def main() -> None:
             src = BUILD / f"scene_{key}.html"
             src.write_text(pages[key](cues, dur))
             pg.goto(src.as_uri())
-            pg.wait_for_load_state("networkidle")
+            pg.wait_for_load_state("load")
             pg.evaluate("document.fonts.ready")
             n = round(dur * args.fps)
             for i in range(n):
@@ -1020,9 +1108,13 @@ def main() -> None:
             src = BUILD / f"scene_{key}.html"
             src.write_text(pages[key](cues, dur))
             pg.goto(src.as_uri())
-            pg.wait_for_load_state("networkidle")
+            pg.wait_for_load_state("load")
             pg.evaluate("document.fonts.ready")
             pg.wait_for_timeout(800)  # 計器盤が記録を描き終えるのを待つ
+            pg.evaluate(
+                "Promise.all([...document.querySelectorAll('video')].map(v => v.readyState >= 2 ? 1 :"
+                " new Promise(r => v.addEventListener('loadeddata', r, { once: true }))))"
+            )
             if args.stills:
                 times = [q["e"] - 0.05 for q in cues] or [dur / 2]
                 for i, ts in enumerate(times):
