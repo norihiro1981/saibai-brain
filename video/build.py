@@ -836,7 +836,7 @@ def main() -> None:
     ap.add_argument("--fps", type=int, default=30)
     ap.add_argument("--voice", type=int, default=VOICE_ID, help="AivisSpeech の声（スタイル ID）")
     ap.add_argument("--speed", type=float, default=1.05)
-    ap.add_argument("--bgm-db", type=float, default=-6.0, help="BGM の大きさ（声の無い所・dB）")
+    ap.add_argument("--bgm-db", type=float, default=-12.0, help="BGM の大きさ（声の無い所・dB）")
     ap.add_argument("--no-bgm", action="store_true")
     args = ap.parse_args()
     BUILD.mkdir(parents=True, exist_ok=True)
