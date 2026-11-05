@@ -19,3 +19,17 @@ spikes/logs/
 
 # 受け手の記録（手元だけ）
 run/
+
+# 動画（出来上がり・素材・実写・声は手元だけ＝大きい・外に出さない）
+# 残すのは台本と組み立ての手順（video/*.md・video/*.py）だけ
+video/out/
+video/assets/
+*.mp4
+*.mov
+*.m4v
+*.webm
+*.mkv
+*.wav
+*.aiff
+*.m4a
+*.mp3
