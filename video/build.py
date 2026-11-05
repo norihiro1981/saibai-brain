@@ -34,6 +34,11 @@ AIVIS = "http://127.0.0.1:10101"
 VOICE_ID = 1937616896  # にせ（低めで落ち着いた講義調・ACML 1.0＝商用可・クレジット任意）
 LEAD, GAP = 0.5, 0.45  # 場面の頭の間・行と行の間
 TAIL = {"⓪": 1.6, "⑦": 4.0}  # 場面の後ろの間（ほかは 0.8）
+# 冒頭の実写の並び（手元だけ＝git に入らない）。無ければ札で代える。形：
+# {"parts": [{"clip": "norihiro_sample/IMG_0001.mov", "from": 0, "to": 30, "gain_db": 12},
+#            {"black": 1.0}, {"title": 2.5, "turn": true}]}
+# turn＝BGM がここで長調に移る（無ければ ① の頭）
+OPENING = ROOT / "video" / "assets" / "opening.json"
 
 # 読み上げだけ直す語（字幕はそのまま）
 READ = {
@@ -398,6 +403,16 @@ function render(t) {
 <div style="font-size:28px;color:#98a79d;margin-top:14px">暗がりで加湿器を入れる → 昼の手作業 → 暗転 → SwitchBot でひとりでに入る</div></div>"""
         return plain(body, "function render(t){}", cues, total, {})
 
+    # 冒頭の題・暗転 ------------------------------------------------------------
+    def p_title(cues, total):
+        body = """<div id="ttl" style="left:0;top:400px;width:1920px;text-align:center">
+<div style="font-size:104px;font-weight:700;letter-spacing:.14em">栽培室の頭脳</div></div>"""
+        js = 'function render(t){ fade("#ttl", E(P(t, .2, .8)) * (1 - P(t, T - .6, .5)), 12); }'
+        return plain(body, js, cues, total, {})
+
+    def p_black(cues, total):
+        return plain("", "function render(t){}", cues, total, {})
+
     # ① 種明かしと問い --------------------------------------------------------
     def p1(cues, total):
         body = """
@@ -747,7 +762,19 @@ function render(t) {
 }"""
         return plain(body, js, cues, total, {})
 
-    return {"⓪": p0, "O": p_open, "①": p1, "②": p2, "③": p3, "④": p4, "⑤": p5, "⑥": p6, "⑦": p7}
+    return {
+        "⓪": p0,
+        "O": p_open,
+        "title": p_title,
+        "black": p_black,
+        "①": p1,
+        "②": p2,
+        "③": p3,
+        "④": p4,
+        "⑤": p5,
+        "⑥": p6,
+        "⑦": p7,
+    }
 
 
 # ---------------------------------------------------------------- つなぎ
@@ -757,13 +784,57 @@ def ff(*args: str) -> None:
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", *args], check=True)
 
 
-def timeline(scenes, keys, args, use_aivis):
+def sdr(src: Path) -> Path:
+    """iPhone の HDR（HLG）を、macOS の avconvert で SDR（bt709）に直す（作り直さない）。"""
+    out = BUILD / "foot" / f"{src.stem}_sdr.mov"
+    if out.exists() and out.stat().st_mtime > src.stat().st_mtime:
+        return out
+    out.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            "avconvert",
+            "--source",
+            str(src),
+            "--preset",
+            "Preset1920x1080",
+            "--output",
+            str(out),
+            "--replace",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    return out
+
+
+def opening_parts(fps: int) -> list[dict] | None:
+    if not OPENING.exists():
+        return None
+    parts = json.loads(OPENING.read_text())["parts"]
+    for p in parts:
+        if "clip" in p:
+            p["src"] = ROOT / "video" / "assets" / p["clip"]
+            p["video"] = sdr(p["src"])
+            p["len"] = p["to"] - p["from"]
+        else:
+            p["len"] = p.get("black") or p.get("title")
+        p["len"] = round(p["len"] * fps) / fps
+    return parts
+
+
+def timeline(scenes, keys, args, use_aivis, opening):
     """場面ごとに 字幕の時刻（場面の頭から）と長さ を決め、声のファイルの置き場所（動画の頭から）を返す。"""
     plan, voices, t0 = [], [], 0.0
     for key in keys:
         if key == "O":
-            plan.append((key, [], args.opening, t0))
-            t0 += args.opening
+            if opening:
+                for p in opening:
+                    p["at"] = t0
+                    t0 += p["len"]
+                plan.append((key, [], sum(p["len"] for p in opening), opening[0]["at"]))
+            else:
+                plan.append((key, [], args.opening, t0))
+                t0 += args.opening
             continue
         cues, t = [], LEAD
         for text in scenes[key]:
@@ -789,8 +860,10 @@ def timeline(scenes, keys, args, use_aivis):
     return plan, voices, t0
 
 
-def narration(voices, total: float, out: Path, bgm: Path | None, bgm_db: float) -> None:
-    """声を時刻に置いて 1 本にし、BGM を声の下で下げて混ぜる（sidechaincompress）。"""
+def narration(
+    voices, total: float, out: Path, bgm: Path | None, bgm_db: float, clips: list[dict]
+) -> None:
+    """声を時刻に置いて 1 本にし、実写の音を足し、BGM を声と実写の音の下で下げて混ぜる。"""
     ins, flt = [], []
     for i, (at, wav) in enumerate(voices):
         ins += ["-i", str(wav)]
@@ -799,14 +872,28 @@ def narration(voices, total: float, out: Path, bgm: Path | None, bgm_db: float) 
     mix = "".join(f"[a{i}]" for i in range(len(voices)))
     flt.append(
         f"{mix}amix=inputs={len(voices)}:normalize=0,apad,atrim=0:{total:.3f},"
-        "loudnorm=I=-16:TP=-1.5:LRA=11" + ("[v]" if bgm else "[out]")
+        "loudnorm=I=-16:TP=-1.5:LRA=11[vn]"
+    )
+    n = len(voices)
+    for j, c in enumerate(clips):
+        ins += ["-i", str(c["src"])]
+        ms = int(c["at"] * 1000)
+        flt.append(
+            f"[{n + j}:a:0]atrim={c['from']}:{c['to']},asetpts=PTS-STARTPTS,aresample=48000,"
+            f"aformat=channel_layouts=stereo,volume={c.get('gain_db', 0)}dB,"
+            f"afade=t=out:st={c['len'] - 0.4:.3f}:d=0.4,adelay={ms}:all=1,apad,atrim=0:{total:.3f}[c{j}]"
+        )
+    src = "[vn]" + "".join(f"[c{j}]" for j in range(len(clips)))
+    tag = "[v]" if bgm else "[out]"
+    flt.append(
+        f"{src}amix=inputs={1 + len(clips)}:normalize=0{tag}" if clips else f"[vn]anull{tag}"
     )
     if bgm:
-        n = len(voices)
+        k = n + len(clips)
         ins += ["-i", str(bgm)]
         flt.append("[v]asplit=2[v1][v2]")
         flt.append(
-            f"[{n}]aresample=48000,atrim=0:{total:.3f},volume={bgm_db}dB[b];"
+            f"[{k}]aresample=48000,atrim=0:{total:.3f},volume={bgm_db}dB[b];"
             "[b][v2]sidechaincompress=threshold=0.03:ratio=6:attack=40:release=600:makeup=1[bd];"
             "[v1][bd]amix=inputs=2:normalize=0,alimiter=limit=0.89[out]"
         )
@@ -824,6 +911,22 @@ def narration(voices, total: float, out: Path, bgm: Path | None, bgm_db: float) 
         "192k",
         str(out),
     )
+
+
+def clip_frames(p: dict, fps: int, sink) -> int:
+    """実写の切り出しを 1920×1080・fps の JPEG にして sink に流す。流した枚数を返す。"""
+    n = round(p["len"] * fps)
+    proc = subprocess.Popen(
+        ["ffmpeg", "-loglevel", "error", "-ss", str(p["from"]), "-i", str(p["video"]), "-t", f"{p['len']:.3f}",
+         "-vf", f"scale={W}:{H}:force_original_aspect_ratio=decrease,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,"
+         f"fps={fps},tpad=stop_mode=clone:stop_duration=2",
+         "-frames:v", str(n), "-f", "image2pipe", "-c:v", "mjpeg", "-q:v", "2", "-"],
+        stdout=subprocess.PIPE,
+    )  # fmt: skip
+    while chunk := proc.stdout.read(1 << 20):
+        sink.write(chunk)
+    proc.wait()
+    return n
 
 
 def main() -> None:
@@ -848,7 +951,8 @@ def main() -> None:
     rec = load_records()
     pages = scene_pages(rec)
     keys = [k for k in ORDER if not args.only or k in args.only]
-    plan, voices, total = timeline(scenes, keys, args, use_aivis)
+    opening = opening_parts(args.fps) if "O" in keys else None
+    plan, voices, total = timeline(scenes, keys, args, use_aivis, opening)
 
     from playwright.sync_api import sync_playwright
 
@@ -887,7 +991,32 @@ def main() -> None:
         browser = p.chromium.launch(channel="chrome", args=["--hide-scrollbars"])
         pg = browser.new_page(viewport={"width": W, "height": H}, device_scale_factor=1)
         pg.on("pageerror", lambda e: print("  画面の誤り：", e))
+
+        def shoot(key, cues, dur):
+            src = BUILD / f"scene_{key}.html"
+            src.write_text(pages[key](cues, dur))
+            pg.goto(src.as_uri())
+            pg.wait_for_load_state("networkidle")
+            pg.evaluate("document.fonts.ready")
+            n = round(dur * args.fps)
+            for i in range(n):
+                pg.evaluate(f"__frame({i / args.fps})")
+                enc.stdin.write(pg.screenshot(type="jpeg", quality=92))
+            return n
+
         for key, cues, dur, _ in plan:
+            if key == "O" and opening:
+                if args.stills:
+                    print("O 実写（絵は撮らない）")
+                    continue
+                n = 0
+                for p in opening:
+                    if "clip" in p:
+                        n += clip_frames(p, args.fps, enc.stdin)
+                    else:
+                        n += shoot("title" if "title" in p else "black", [], p["len"])
+                print(f"O {dur:5.1f} 秒  {n} 枚（実写）", flush=True)
+                continue
             src = BUILD / f"scene_{key}.html"
             src.write_text(pages[key](cues, dur))
             pg.goto(src.as_uri())
@@ -918,17 +1047,22 @@ def main() -> None:
     if not args.no_bgm:
         bgm = BUILD / "bgm.wav"
         marks = [t0 for k, _, _, t0 in plan if k != "O"]
+        turn = [p["at"] for p in (opening or []) if p.get("turn")]
+        if turn and len(marks) > 1:
+            marks[1] = turn[0]
         subprocess.run(
             ["uv", "run", "python", str(ROOT / "video" / "bgm.py"), f"{total:.3f}", str(bgm)]
             + [f"{m:.3f}" for m in marks],
             check=True,
         )
-    narration(voices, total, audio, bgm, args.bgm_db)
+    clips = [p for p in (opening or []) if "clip" in p]
+    narration(voices, total, audio, bgm, args.bgm_db, clips)
     out = OUT / ("part.mp4" if args.only else "draft.mp4")
     ff("-i", str(video), "-i", str(audio), "-c:v", "copy", "-c:a", "copy", "-shortest", str(out))
     print("\n場面ごとの秒：", "・".join(f"{k} {d:.1f}" for k, _, d, _ in plan))
     body = sum(d for k, _, d, _ in plan if k != "O")
-    print(f"冒頭の外 {body:.1f} 秒＋冒頭 35 秒＝本番の見込み {body + 35:.1f} 秒（3 分＝180 秒）")
+    op = sum(p["len"] for p in opening) if opening else 35.0
+    print(f"冒頭の外 {body:.1f} 秒＋冒頭 {op:.1f} 秒＝{body + op:.1f} 秒（3 分＝180 秒）")
     print(f"出来上がり：{out}")
 
 
