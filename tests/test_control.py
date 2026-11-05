@@ -323,3 +323,64 @@ def test_history_breaks_lines_at_gaps(tmp_path):
     h = history(tmp_path, t0 + timedelta(minutes=30), hours=1)
     nulls = [p for p in h["points"] if p[1] is None]
     assert len(nulls) == 1 and len(h["points"]) == 16 and h["target"]["vpd_high_kpa"] == 0.8
+
+
+def test_manual_on_reports_plug_failure(tmp_path):
+    """守りの層が受け付けても、プラグが入らなければ「済み」と言わず、断られた理由を返す（11/5）。"""
+    ctrl, plug, clock = make(tmp_path)
+    plug.fail_with = "turnOn を断られた：HTTP 200・statusCode 190・テスト"
+    r = ctrl.set_humidifier(True, 30)
+    assert not r["ok"] and "プラグが入らなかった" in r["text"] and "statusCode 190" in r["text"]
+    assert plug.on is False
+    st = ctrl.status()["plug"]
+    assert st["want_on"] is True and st["actual_on"] is False and "190" in st["error"]
+    lines = [
+        json.loads(x)
+        for x in (tmp_path / f"control_{clock.t:%Y%m%d}.jsonl").read_text().splitlines()
+    ]
+    failed = [x for x in lines if x["kind"] == "plug_set" and not x["ok"]]
+    assert failed and "190" in failed[-1]["error"]
+    manual = [x for x in lines if x["kind"] == "action" and x["who"] == "手動"][-1]
+    assert manual["accepted"] is False and "190" in manual["reasons"][0]
+    # 命令が通るようになれば、毎分の点検で入れ直して理由は消える
+    plug.fail_with = None
+    clock.t += timedelta(minutes=1)
+    ctrl.tick(check_plug=True)
+    assert plug.on is True and ctrl.status()["plug"]["error"] is None
+
+
+class _Reply:
+    def __init__(self, http, status_code, message, body=None):
+        self.http, self.status_code, self.message, self.body = (
+            http,
+            status_code,
+            message,
+            body or {},
+        )
+
+
+class _Client:
+    def __init__(self, cmd_reply, power="off"):
+        self.cmd_reply, self.power = cmd_reply, power
+
+    def command(self, device_id, command):
+        if isinstance(self.cmd_reply, Exception):
+            raise self.cmd_reply
+        return self.cmd_reply
+
+    def status(self, device_id):
+        return _Reply(200, 100, "success", {"power": self.power})
+
+
+def test_switchbot_plug_keeps_reason():
+    """本物のプラグの類は叩かず、偽のクライアントで返りの理由が残るのを確かめる。"""
+    from saibai.control import SwitchBotPlug
+
+    p = SwitchBotPlug(_Client(_Reply(200, 161, "device offline")), "x", settle_s=0)
+    assert p.set(True) is False and "161" in p.last_error and "device offline" in p.last_error
+    p = SwitchBotPlug(_Client(TimeoutError("遅い")), "x", settle_s=0)
+    assert p.set(True) is False and "TimeoutError" in p.last_error
+    p = SwitchBotPlug(_Client(_Reply(200, 100, "success"), power="off"), "x", settle_s=0)
+    assert p.set(True) is False and "秒後の状態が切" in p.last_error
+    p = SwitchBotPlug(_Client(_Reply(200, 100, "success"), power="on"), "x", settle_s=0)
+    assert p.set(True) is True and p.last_error is None

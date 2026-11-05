@@ -277,7 +277,8 @@ function renderControls(s) {
   const reasons = (p.off_reasons || []).filter((r) => r !== "今は計画の運転の時間ではない");
   const lp = s.last_plan;
   const why = $("offReasons");
-  if (lp && !lp.ok) { why.textContent = `${lp.source} の計画を断った：${lp.text.replace(/^断った：/, "")}`; why.className = "why bad"; }
+  if (p.want_on && p.actual_on === false) { why.textContent = `入のはずがプラグが切のまま：${p.error || "理由不明"}（毎分入れ直す）`; why.className = "why bad"; }
+  else if (lp && !lp.ok) { why.textContent = `${lp.source} の計画を断った：${lp.text.replace(/^断った：/, "")}`; why.className = "why bad"; }
   else if (!on && reasons.length) { why.textContent = "今は入れない：" + reasons.join("／"); why.className = "why"; }
   else { why.textContent = lp ? `最後の計画（${lp.source}）：${lp.text}` : ""; why.className = "why"; }
   if (t) {

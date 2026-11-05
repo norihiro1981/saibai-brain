@@ -26,6 +26,9 @@ class Plug(Protocol):
 
     def set(self, on: bool) -> bool: ...  # 確かめて思いどおりなら True
 
+    # 最後の set が思いどおりでなかった時の理由（成功した時は None）。記録と画面に出す。
+    last_error: str | None
+
 
 class DummyPlug:
     """模擬のプラグ。テストと、人が付いていない時の既定。"""
@@ -35,13 +38,19 @@ class DummyPlug:
     def __init__(self, on: bool = False):
         self.on = on
         self.commands: list[bool] = []
+        self.last_error: str | None = None
+        self.fail_with: str | None = None  # テストで「命令が断られた」を模す
 
     def read(self) -> bool | None:
         return self.on
 
     def set(self, on: bool) -> bool:
         self.commands.append(on)
+        if self.fail_with:
+            self.last_error = self.fail_with
+            return False
         self.on = on
+        self.last_error = None
         return True
 
 
@@ -54,6 +63,7 @@ class SwitchBotPlug:
         self.client = client
         self.device_id = device_id
         self.settle_s = settle_s
+        self.last_error: str | None = None
 
     def read(self) -> bool | None:
         try:
@@ -64,14 +74,25 @@ class SwitchBotPlug:
         return None if p is None else p == "on"
 
     def set(self, on: bool) -> bool:
+        cmd = "turnOn" if on else "turnOff"
         try:
-            r = self.client.command(self.device_id, "turnOn" if on else "turnOff")
-        except Exception:
+            r = self.client.command(self.device_id, cmd)
+        except (
+            Exception
+        ) as e:  # 通信の失敗（時間切れ等）。鍵はヘッダにしか無いので例外の字には出ない
+            self.last_error = f"{cmd} が届かない：{type(e).__name__}: {e}"
             return False
         if r.status_code != 100:
+            self.last_error = f"{cmd} を断られた：HTTP {r.http}・statusCode {r.status_code}・{r.message or '理由なし'}"
             return False
         time.sleep(self.settle_s)
-        return self.read() == on
+        got = self.read()
+        if got != on:
+            seen = "読めない" if got is None else ("入" if got else "切")
+            self.last_error = f"{cmd} は通ったが {self.settle_s:g} 秒後の状態が{seen}"
+            return False
+        self.last_error = None
+        return True
 
 
 class Schedule(Protocol):
@@ -194,6 +215,7 @@ class Controller:
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self.plug_actual: bool | None = None
         self.plug_checked_at: datetime | None = None
+        self.plug_error: str | None = None  # 最後のプラグへの命令が思いどおりでなかった理由
         self.last_decision_reasons: list[str] = []
         self.last_plan_verdict: dict | None = None
         self.latest: tuple[float | None, float] | None = None  # 最後の読み（温度・湿度）
@@ -238,8 +260,18 @@ class Controller:
         ok = self.plug.set(on)
         self.plug_actual = on if ok else self.plug.read()
         self.plug_checked_at = self.now()
+        self.plug_error = (
+            None if ok else (getattr(self.plug, "last_error", None) or "理由が分からない")
+        )
+        extra = {} if ok else {"error": self.plug_error}
         self._log(
-            "plug_set", on=on, ok=ok, why=why, plug=self.plug.kind, plug_after=self.plug_actual
+            "plug_set",
+            on=on,
+            ok=ok,
+            why=why,
+            plug=self.plug.kind,
+            plug_after=self.plug_actual,
+            **extra,
         )
         return self.plug_actual
 
@@ -392,7 +424,8 @@ class Controller:
                     self._action(
                         "外から",
                         "入" if actual else "切",
-                        reasons=[why],
+                        reasons=[why]
+                        + ([self.plug_error] if after != d.on and self.plug_error else []),
                         plug_after=after,
                         note=self._gap_note() or "毎分の点検で記録に無い変化を見つけた",
                     )
@@ -437,7 +470,14 @@ class Controller:
                 if v.ok and not self.guard.on:  # 受け付けても入らなかった時は、その理由まで返す
                     text = "受け付けたが、今は入れない：" + "／".join(self.last_decision_reasons)
                     reasons = self.last_decision_reasons
-                ok = v.ok and self.guard.on
+                plug_failed = v.ok and self.guard.on and self.plug_actual is not True
+                if (
+                    plug_failed
+                ):  # 守りの層は入にしたが、プラグが入らなかった（毎分の点検で入れ直す）
+                    why = self.plug_error or "プラグの状態が読めない"
+                    text = f"守りの層は受け付けたが、プラグが入らなかった：{why}（毎分入れ直す）"
+                    reasons = [why]
+                ok = v.ok and self.guard.on and not plug_failed
                 self._action(
                     "手動",
                     "入",
@@ -504,6 +544,7 @@ class Controller:
                     "kind": self.plug.kind,
                     "want_on": self.guard.on,
                     "actual_on": self.plug_actual,
+                    "error": self.plug_error,
                     "checked_at": self.plug_checked_at.isoformat()
                     if self.plug_checked_at
                     else None,
