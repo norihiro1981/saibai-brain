@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from saibai.guard import JST, REAL, REPLAY, Guard, Limits, Reading, Run, jst_day
+from saibai.guard import DEMO, JST, REAL, REPLAY, Guard, Limits, Reading, Run, jst_day
 
 T0 = datetime(2026, 8, 15, 5, 0, tzinfo=JST)
 EV = [{"device": "node_a", "metric": "temp_c", "value": 27.0, "time": T0.isoformat()}]
@@ -248,7 +248,7 @@ def intervals_from(log):
     return out
 
 
-@pytest.mark.parametrize("limits", [REPLAY, REAL], ids=["再生", "実機"])
+@pytest.mark.parametrize("limits", [REPLAY, REAL, DEMO], ids=["再生", "実機", "デモ"])
 def test_random_plans_never_break_limits(limits):
     total_on = 0
     for seed in range(120):
@@ -275,8 +275,10 @@ def test_random_plans_never_break_limits(limits):
             if on:
                 assert not manual, (seed, t)
                 assert sensor_ok, (seed, t)
-                assert rh is not None and rh < limits.stop_rh, (seed, t, rh)
-                if not was_on:
+                assert rh is not None
+                if limits.stop_rh is not None:
+                    assert rh < limits.stop_rh, (seed, t, rh)
+                if not was_on and limits.no_start_rh is not None:
                     assert rh < limits.no_start_rh, (seed, t, rh)
     assert total_on > 50  # ちゃんと入る場面もあった（何もしない守りではない）
 
@@ -325,3 +327,60 @@ def test_auto_plan_keeps_manual_run():
     assert not v.ok and "1 日の上限" in v.text()
     v = g.submit_plan([Run(T0 + timedelta(hours=2), 60, "オート")], EV, T0 + timedelta(minutes=1))
     assert v.ok and sorted(r.source for r in g.runs) == ["オート", "手動"]
+
+
+# ---- 実機デモの組（v0.7）----
+
+
+def test_demo_set_drops_only_the_two_humidity_lines():
+    assert DEMO.no_start_rh is None and DEMO.stop_rh is None and not DEMO.humidity_lines
+    assert REAL.humidity_lines and REPLAY.humidity_lines  # 再生と本番はそのまま
+    assert (REAL.no_start_rh, REAL.stop_rh) == (REPLAY.no_start_rh, REPLAY.stop_rh) == (75.0, 85.0)
+    for f in (
+        "max_continuous",
+        "max_daily",
+        "min_gap",
+        "stale_after",
+        "stuck_after",
+        "no_rise_after",
+        "no_rise_pt",
+        "jump_pt",
+        "plan_timeout",
+    ):
+        assert getattr(DEMO, f) == getattr(REAL, f), f
+    assert "湿度の線は止めている" in DEMO.label()
+
+
+def test_demo_starts_at_76_and_does_not_stop_at_86():
+    g = fresh_guard(DEMO, rh=76)
+    assert g.submit_plan([Run(T0, 30)], EV, T0).ok
+    assert g.decide(T0).on
+    for i, rh in enumerate([78, 81, 84, 86, 88], start=1):  # 1 分に 2〜3 pt＝跳びにはしない
+        t = T0 + timedelta(minutes=i)
+        g.observe(Reading(t, rh))
+        assert g.decide(t).on, (t, rh)
+
+
+def test_replay_and_real_still_refuse_76_and_stop_at_86():
+    for limits in (REPLAY, REAL):
+        g = fresh_guard(limits, rh=76)
+        v = g.submit_plan([Run(T0, 30)], EV, T0)
+        assert not v.ok and "75%" in v.text()
+        g = fresh_guard(limits, rh=70)
+        assert g.submit_plan([Run(T0, 30)], EV, T0).ok and g.decide(T0).on
+        for i, rh in enumerate([74, 78, 82, 86], start=1):
+            t = T0 + timedelta(minutes=i)
+            g.observe(Reading(t, rh))
+            d = g.decide(t)
+        assert not d.on and any("85%" in r for r in d.reasons)
+
+
+def test_demo_keeps_the_other_lines():
+    g = fresh_guard(DEMO, rh=80)
+    assert g.submit_plan([Run(T0, 60)], EV, T0).ok
+    log = tick_until(g, T0, 70, rh=80)
+    assert sum(d.on for _, d in log) <= 60  # 続けて 60 分まで
+    assert not g.submit_plan([Run(T0, 61)], EV, T0).ok
+    g = fresh_guard(DEMO, rh=80)
+    g.stop_all(T0)
+    assert not g.submit_plan([Run(T0, 10)], EV, T0).ok  # 止めるが最優先

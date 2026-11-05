@@ -2,6 +2,7 @@
 # 受け手を launchd（ログインした人の自動起動）に入れる／外す。
 #   sh scripts/install_receiver_agent.sh             模擬のプラグで入れて起動する
 #   sh scripts/install_receiver_agent.sh switchbot   本物のプラグで入れて起動する
+#   sh scripts/install_receiver_agent.sh switchbot demo   本物のプラグ・実機デモの組（湿度の 2 本を止める・人が付く時だけ）
 #   sh scripts/install_receiver_agent.sh remove      止めて外す
 # ログインすると起動し、落ちたら起こし直す（受け手は起動するたびにプラグを「切」から始める）。
 # caffeinate -s で包む＝電源につないでいる間は Mac が眠らない（眠ると記録が抜け、取り戻せない）。
@@ -26,6 +27,10 @@ PLUG="dummy"
 if [ "${1:-}" = "switchbot" ]; then
   PLUG="switchbot"
 fi
+GUARD="real"
+if [ "${2:-}" = "demo" ]; then
+  GUARD="demo"
+fi
 
 mkdir -p "$REPO/run" "$HOME/Library/LaunchAgents"
 cat > "$PLIST" <<EOF
@@ -46,6 +51,7 @@ cat > "$PLIST" <<EOF
     <key>PATH</key><string>$(dirname "$UV"):/usr/bin:/bin</string>
     <key>PYTHONUNBUFFERED</key><string>1</string>
     <key>SAIBAI_PLUG</key><string>$PLUG</string>
+    <key>SAIBAI_GUARD</key><string>$GUARD</string>
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
@@ -64,5 +70,5 @@ while launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1 && [ $i -lt 20 ]; do
   i=$((i + 1))
 done
 launchctl bootstrap "$DOMAIN" "$PLIST"
-echo "入れた：${PLIST}（プラグ＝${PLUG}）"
+echo "入れた：${PLIST}（プラグ＝${PLUG}・守りの層の組＝${GUARD}）"
 echo "記録：${REPO}/run/receiver.log"

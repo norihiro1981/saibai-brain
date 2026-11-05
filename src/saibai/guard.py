@@ -25,8 +25,8 @@ class Limits:
 
     max_continuous: timedelta
     max_daily: timedelta
-    no_start_rh: float
-    stop_rh: float
+    no_start_rh: float | None  # None＝この組では湿度で入れないを止めている（実機デモ）
+    stop_rh: float | None  # None＝この組では湿度で切るを止めている（実機デモ）
     min_gap: timedelta
     stale_after: timedelta
     stuck_after: timedelta
@@ -38,18 +38,45 @@ class Limits:
     plan_timeout: timedelta
     tick: timedelta
     horizon: timedelta
+    name: str = ""  # 組の名（real／replay／demo）
+
+    @property
+    def humidity_lines(self) -> bool:
+        return self.no_start_rh is not None and self.stop_rh is not None
+
+    def label(self) -> str:
+        """画面とログに出す組の名。"""
+        base = {"real": "実機", "replay": "再生", "demo": "デモ"}.get(self.name, self.name)
+        if not self.humidity_lines:
+            return f"{base}：湿度の線は止めている"
+        return f"{base}：湿度 {self.no_start_rh:.0f}% 以上は入れない・{self.stop_rh:.0f}% で切る"
+
+    def lines_text(self) -> str:
+        """計画の依頼文に書く線（止めた線は書かない）。"""
+        parts = []
+        if self.no_start_rh is not None:
+            parts.append(f"湿度 {self.no_start_rh:.0f}% 以上では入れない")
+        if self.stop_rh is not None:
+            parts.append(f"{self.stop_rh:.0f}% で切る")
+        parts += [
+            f"続けて {self.max_continuous // MIN} 分まで",
+            f"1 日 {self.max_daily // MIN} 分まで",
+            f"入れて {self.no_rise_after // MIN} 分で湿度が {self.no_rise_pt:.0f} pt も上がらなければ切る",
+        ]
+        return "・".join(parts)
 
 
 def limits_from_config(kind: str, cfg: dict | None = None) -> Limits:
-    """kind＝"real"（本物の実機）か "replay"（再生）。"""
+    """kind＝"real"（本物の実機）・"replay"（再生）・"demo"（実機のデモ・湿度の 2 本を止める）。"""
     g = (cfg or config.load())["guard"]
+    hum = g[kind].get("humidity_lines", True)
     m = lambda k: timedelta(minutes=g[k])  # noqa: E731
     h = lambda k: timedelta(hours=g[k])  # noqa: E731
     return Limits(
         max_continuous=timedelta(minutes=g[kind]["max_continuous_min"]),
         max_daily=timedelta(minutes=g[kind]["max_daily_min"]),
-        no_start_rh=float(g["no_start_rh"]),
-        stop_rh=float(g["stop_rh"]),
+        no_start_rh=float(g["no_start_rh"]) if hum else None,
+        stop_rh=float(g["stop_rh"]) if hum else None,
         min_gap=m("min_gap_min"),
         stale_after=m("stale_after_min"),
         stuck_after=m("stuck_after_min"),
@@ -61,6 +88,7 @@ def limits_from_config(kind: str, cfg: dict | None = None) -> Limits:
         plan_timeout=h("plan_timeout_h"),
         tick=m("tick_min"),
         horizon=h("horizon_h"),
+        name=kind,
     )
 
 
@@ -68,6 +96,8 @@ def limits_from_config(kind: str, cfg: dict | None = None) -> Limits:
 REPLAY = limits_from_config("replay")
 # 本物の実機の線（人が付く日）＝再生より短く
 REAL = limits_from_config("real")
+# 実機のデモの線（人が付いて動かす・湿度の 2 本を止める）＝評価には使わない
+DEMO = limits_from_config("demo")
 
 
 @dataclass(frozen=True)
@@ -269,7 +299,7 @@ class Guard:
                 )
         rh = self.current_rh()
         starts_now = bool(runs) and runs[0].start <= now + L.tick
-        if starts_now and rh is not None and rh >= L.no_start_rh:
+        if starts_now and L.no_start_rh is not None and rh is not None and rh >= L.no_start_rh:
             reasons.append(f"今の湿度が {rh}%（{L.no_start_rh:.0f}% 以上では入れない）")
         # 今すぐ始める計画は、根拠が湿度でなくても、センサーが疑わしい間は decide が入れない
         # ＝受け付けたと返して入らない、を起こさないよう、ここで断る
@@ -315,7 +345,7 @@ class Guard:
             if self.runs or self.on:
                 off.append(f"計画が {L.plan_timeout // timedelta(hours=1)} 時間来ていない")
             self.runs = []
-        if not problems and rh is not None and rh >= L.stop_rh:
+        if not problems and L.stop_rh is not None and rh is not None and rh >= L.stop_rh:
             off.append(f"湿度が {rh}%（{L.stop_rh:.0f}% で切る）")
             drop_run = True
         run = self._active_run(now)
@@ -340,7 +370,7 @@ class Guard:
                 )
                 drop_run = True
         else:
-            if rh is not None and rh >= L.no_start_rh:
+            if L.no_start_rh is not None and rh is not None and rh >= L.no_start_rh:
                 off.append(f"湿度が {rh}%（{L.no_start_rh:.0f}% 以上では入れない）")
             if self.last_off and now - self.last_off < L.min_gap:
                 off.append(f"{self.last_off:%H:%M} に切ってから {L.min_gap // MIN} 分たっていない")
@@ -369,6 +399,10 @@ class Guard:
             "used_today_min": round(self.used_on(jst_day(now), now) / MIN, 1),
             "max_daily_min": self.limits.max_daily // MIN,
             "max_continuous_min": self.limits.max_continuous // MIN,
+            "set": self.limits.name,
+            "set_text": self.limits.label(),
+            "humidity_lines": self.limits.humidity_lines,
+            "lines_text": self.limits.lines_text(),
             "runs": [
                 {"start": r.start.isoformat(), "minutes": r.minutes, "source": r.source}
                 for r in self.runs

@@ -40,6 +40,15 @@ max_daily_min = 120
 max_continuous_min = 180
 max_daily_min = 360
 
+# 実機のデモの線（v0.7・人が付いて動かす日）。工場の湿度では 75%／85% の 2 本がすぐ効き、
+# 加湿器が動く所を見せられない＝2 本だけを「無し」にする。ほかの線（連続・1 日・古い値・止まり・
+# 15 分で上がらなければ切る・止める・起動は切・計画に無い入を切る）は実機と同じに残す。
+# 評価の数字はこの組で取らない。受け手は SAIBAI_GUARD=demo で起動した時だけこの組を使う。
+[guard.demo]
+max_continuous_min = 60
+max_daily_min = 120
+humidity_lines = false
+
 # 狙いの VPD の帯（表示だけ・入力欄は作らない）。data/knowledge_seed.md §1 から：
 # 上＝0.82 kPa を越えると収量が下がる（産地の閾値）の手前・下＝RH 70〜80% の目安を 15〜20℃ で VPD にした 0.34〜0.47 の間
 [target]

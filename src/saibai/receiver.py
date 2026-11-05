@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 
 from saibai import config
 from saibai.control import Controller, DeploymentSchedule, DummyPlug, NoSchedule, SwitchBotPlug
-from saibai.guard import REAL, Guard
+from saibai.guard import Guard, limits_from_config
 from saibai.switchbot import SwitchBotClient
 from saibai.vpd import vpd_kpa
 
@@ -285,7 +285,12 @@ def main() -> None:
         import anthropic
 
         schedule = DeploymentSchedule(anthropic.Anthropic(), dep)
-    ctrl = Controller(Guard(REAL), plug, schedule, run_dir, now_jst)
+    # 守りの層の組：既定は実機。人が付いて動かすデモだけ SAIBAI_GUARD=demo（湿度の 2 本を止める）
+    guard_set = os.environ.get("SAIBAI_GUARD", "real")
+    if guard_set not in ("real", "demo"):
+        raise SystemExit(f"SAIBAI_GUARD={guard_set} は使えない（real か demo）")
+    limits = limits_from_config(guard_set)
+    ctrl = Controller(Guard(limits), plug, schedule, run_dir, now_jst)
     sync = start_memory_sync(run_dir)
     if sync:
         ctrl.on_action.append(sync[1])
@@ -307,7 +312,8 @@ def main() -> None:
         f"受け手を起動：http://127.0.0.1:{port}/status・{READ_EVERY_S} 秒ごとに読む・記録＝{run_dir}"
     )
     print(
-        f"プラグ＝{plug.kind}（起動したので切にした）・守りの層＝実機の線（続けて 60 分・1 日 120 分）"
+        f"プラグ＝{plug.kind}（起動したので切にした）・守りの層＝{limits.label()}"
+        f"（{limits.lines_text()}）"
     )
 
     gap_after = timedelta(minutes=config.load()["receiver"]["gap_after_min"])
