@@ -294,6 +294,19 @@ def main() -> None:
     sync = start_memory_sync(run_dir)
     if sync:
         ctrl.on_action.append(sync[1])
+    # 外の天気（v0.7）：地点の設定（リポジトリの外）があれば 10 分ごとに取る。無ければ天気は無しで動く
+    from saibai.weather import Weather, load_place
+    from saibai.weather import start_background as start_weather
+
+    place = load_place()
+    ctrl.weather = Weather(place, run_dir, now_jst)
+    if place:
+        if sync:
+            ctrl.weather.on_update.append(sync[0].put_weather)
+        start_weather(ctrl.weather)
+        print("外の天気：近くのアメダスを 10 分ごと・兵庫県の予報を発表の後に取る（気象庁）")
+    else:
+        print("外の天気：地点の設定が無い（private/weather_place.toml）＝天気は無しで動く")
     ctrl.start()
     if ids.get("deployment") and ids.get("control"):
         import anthropic

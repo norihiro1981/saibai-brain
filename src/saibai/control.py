@@ -222,6 +222,7 @@ class Controller:
         self.last_gap: tuple[datetime, datetime] | None = None
         self.on_action = []  # 操作の記録が 1 件できるたびに呼ぶ（置き場への写し・段 B）
         self.auto = None  # オートの起動を見に行く糸（段 C・receiver が付ける）
+        self.weather = None  # 外の天気（v0.7・receiver が付ける。無ければ天気は無し）
         self.timer_file = run_dir / "timer.json"
         try:
             self.timer = json.loads(self.timer_file.read_text())
@@ -430,8 +431,20 @@ class Controller:
                         note=self._gap_note() or "毎分の点検で記録に無い変化を見つけた",
                     )
 
-    def submit(self, runs: list[Run], evidence: list[dict], source: str) -> Verdict:
-        """計画を守りの層に出す（オートのエージェント・定時のタイマー）。"""
+    def weather_summary(self) -> dict | None:
+        """計画に渡す外の天気の要約（取れていなければ ok=false と理由）。"""
+        if self.weather is None:
+            return {"ok": False, "reason": "天気を取っていない（地点の設定が無い）", "text": ""}
+        try:
+            return self.weather.summary()
+        except Exception as e:  # 天気で守りを止めない
+            return {"ok": False, "reason": f"{type(e).__name__}", "text": ""}
+
+    def submit(
+        self, runs: list[Run], evidence: list[dict], source: str, extra: dict | None = None
+    ) -> Verdict:
+        """計画を守りの層に出す（オートのエージェント・定時のタイマー）。extra＝操作の記録に足す物
+        （計画の理由・その時に見た天気の要約）。"""
         with self._lock:
             v = self.guard.submit_plan(runs, evidence, self.now(), source)
             self.last_plan_verdict = {"source": source, "ok": v.ok, "text": v.text()}
@@ -443,6 +456,7 @@ class Controller:
                     reasons=v.reasons,
                     runs=[{"start": r.start.isoformat(), "minutes": r.minutes} for r in runs],
                     minutes=sum(r.minutes for r in runs),
+                    **(extra or {}),
                 )
             self.tick(check_plug=False)
             return v
@@ -536,6 +550,14 @@ class Controller:
             )
             return v | {"ok": ok}
 
+    def _weather_status(self) -> dict:
+        if self.weather is None:
+            return {"ok": False, "reason": "地点の設定が無い", "line": ""}
+        try:
+            return self.weather.status()
+        except Exception as e:
+            return {"ok": False, "reason": type(e).__name__, "line": ""}
+
     def status(self) -> dict:
         with self._lock:
             now = self.now()
@@ -554,5 +576,6 @@ class Controller:
                 "last_plan": self.last_plan_verdict,
                 "schedule": self.schedule.get(),
                 "auto": self.auto.status() if self.auto else None,
+                "weather": self._weather_status(),
                 "timer": self.timer | {"text": self._timer_text()},
             }

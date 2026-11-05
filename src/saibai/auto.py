@@ -16,6 +16,7 @@ from pathlib import Path
 from saibai import config
 from saibai.agents import store_resource
 from saibai.guard import Run
+from saibai.weather import prompt_block
 
 REVIEW_PROMPT = (
     "振り返りの時間です（オートの定時の起動）。\n"
@@ -26,11 +27,17 @@ REVIEW_PROMPT = (
     "まだ 60 分たっていない入は、たった分だけを書き「途中」と付ける。\n"
     "3. 経験を書き直す：前の版を読んだ上で、「操作の効き目（事実）」の表に新しい行を足し、「傾向」の数（もとにした回の数）を"
     "直し、「最後に振り返った時刻」を今回数えた最後の時刻にする。真似でなく効き目だけ。新しい操作が無ければ、その旨と時刻だけ直す。\n"
+    "3b. 外の天気（農家が年々覚える物）：/mnt/memory/saibai-meter/weather/ に外の 1 時間値（YYYY-MM-DD.csv）と最新の予報"
+    "（forecast.md）がある。操作の記録の what=計画 の weather は、その計画の時に見た予報の要約。"
+    "「雨の予報で控えた→部屋の湿度は本当に上がったか」「外の湿度が上がってから部屋の湿度が何時間遅れで上がるか（相関と遅れ）」"
+    "「予報は当たったか（翌日の外の降水と比べる）」を Python で数え、経験の「外の天気」の節に、もとにした回の数と一緒に書く。"
+    "この部屋に外の天気が効くかは決めつけない（回が少なければ「まだ分からない」と書く）。外の記録が無ければ飛ばす。\n"
     "4. 最後に、今回足した行と変えた傾向を 5 行以内で書いて終わる。"
 )
 
 
-def plan_prompt(now: datetime, status: dict, target: dict) -> str:
+def plan_prompt(now: datetime, status: dict, target: dict, weather: dict | None = None) -> str:
+    """weather＝Weather.summary()（無ければ「天気は無し」と書く）。生の JSON は入れない。"""
     m = status.get("meter") or {}
     g = status.get("guard") or {}
     return (
@@ -40,7 +47,8 @@ def plan_prompt(now: datetime, status: dict, target: dict) -> str:
         f"狙いの VPD の帯：{target['vpd_low_kpa']}〜{target['vpd_high_kpa']} kPa（帯の中なら入れなくてよい）。\n"
         f"守りの層（今の組の線）：{g.get('lines_text')}（今日 {g.get('used_today_min')} 分動いた）。"
         f"センサーの疑い：{g.get('sensor_problems') or 'なし'}。\n"
-        "次の起動（約 3 時間後）までの計画を submit_plan で 1 つ出してください。"
+        + prompt_block(weather)
+        + "次の起動（約 3 時間後）までの計画を submit_plan で 1 つ出してください。"
         "/mnt/memory/saibai-experience/experience.md の経験（効き目）と、必要なら温湿度の記録を読み、"
         "理由にはどの経験の行を使ったかと数値と時刻を引いてください。結果を受けたら一言で締めてください。"
     )
@@ -161,6 +169,8 @@ class AutoRunner:
         if self.sync:
             self.sync.kick_meter()  # 計画のセッションの前にも、温湿度を最新まで写す
         status = self.ctrl.status() | {"meter": self.meter_now()}
+        weather = self.ctrl.weather_summary()
+        rec["weather"] = weather
         target = config.load()["target"]
         s = self.client.beta.sessions.create(
             agent=ids["control"],
@@ -184,7 +194,9 @@ class AutoRunner:
             events=[
                 {
                     "type": "user.message",
-                    "content": [{"type": "text", "text": plan_prompt(self.now(), status, target)}],
+                    "content": [
+                        {"type": "text", "text": plan_prompt(self.now(), status, target, weather)}
+                    ],
                 }
             ],
         )
@@ -196,7 +208,12 @@ class AutoRunner:
             if err:
                 rec["plans"].append({"input": ev.input, "ok": False, "text": err})
                 return err
-            v = self.ctrl.submit(runs, evidence, "オート")
+            v = self.ctrl.submit(
+                runs,
+                evidence,
+                "オート",
+                extra={"reason": ev.input.get("reason"), "weather": weather},
+            )
             text = v.text() if runs else ("受け付けた：今回は入れない。" if v.ok else v.text())
             rec["plans"].append({"input": ev.input, "ok": v.ok, "text": text})
             return text

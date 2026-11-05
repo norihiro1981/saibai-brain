@@ -376,7 +376,8 @@ def ensure_agents(client, ids: dict) -> dict:
 
 def main() -> None:
     """uv run saibai-agents setup：環境・置き場 4 つ・エージェント 3 体を作る（あれば使い回す）。
-    uv run saibai-agents models：作ってあるエージェントのモデルと effort を MODELS にそろえる。"""
+    uv run saibai-agents models：作ってあるエージェントのモデルと effort を MODELS にそろえる。
+    uv run saibai-agents review-prompt：定時の起動の振り返りの依頼文を auto.REVIEW_PROMPT にそろえる。"""
     import sys
 
     import anthropic
@@ -393,3 +394,18 @@ def main() -> None:
         print(json.dumps({k: v for k, v in ids.items() if not k.startswith("probe")}, indent=2))
     elif cmd == "models":  # uv run saibai-agents models：役ごとのモデルと effort をそろえる
         print("\n".join(sync_models(client, ids)))
+    elif (
+        cmd == "review-prompt"
+    ):  # 定時の起動の最初の依頼文（振り返り）を auto.REVIEW_PROMPT にそろえる
+        from saibai.auto import REVIEW_PROMPT
+
+        d = client.beta.deployments.update(
+            ids["deployment"],
+            initial_events=[
+                {"type": "user.message", "content": [{"type": "text", "text": REVIEW_PROMPT}]}
+            ],
+        )
+        got = d.initial_events[0].content[0].text if d.initial_events else ""
+        print(
+            f"定時の起動の依頼文を更新した（{len(got)} 字・同じ={got == REVIEW_PROMPT}・{d.status}）"
+        )

@@ -146,6 +146,18 @@ class MemorySync:
         self.state[key] = left
         self._save_state()
 
+    def put_weather(self, w) -> None:
+        """外の天気（v0.7）を温湿度の置き場の /weather/ に写す：今日の 1 時間値の CSV と最新の予報の要約。
+        失敗しても次の更新（10 分後）で丸ごと書き直す＝印は要らない。"""
+        now = self.now().astimezone(JST)
+        with self._lock:
+            try:
+                self._put(self.meter_store, f"/weather/{now:%Y-%m-%d}.csv", w.hourly_csv(now))
+                self._put(self.meter_store, "/weather/forecast.md", w.forecast_md())
+                self.last_ok_at = self.now()
+            except Exception as e:
+                self.last_error = f"天気：{type(e).__name__}: {str(e)[:200]}"
+
     def status(self) -> dict:
         return {
             "pending_hours": list(self.state["dirty_hours"]),
