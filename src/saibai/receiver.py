@@ -228,9 +228,13 @@ def make_handler(log: MeterLog, ctrl: Controller | None = None):
                 self._send(ctrl.set_schedule(bool(req.get("on"))))
             elif self.path == "/timer":
                 m = req.get("minutes")
+                ai = req.get("ai_minutes")
                 self._send(
                     ctrl.set_timer(
-                        bool(req.get("on")), req.get("start"), None if m is None else int(m)
+                        bool(req.get("on")),
+                        req.get("start"),
+                        None if m is None else int(m),
+                        None if ai is None else bool(ai),
                     )
                 )
             else:
@@ -317,6 +321,7 @@ def main() -> None:
             anthropic.Anthropic(), ids, ctrl, run_dir, now_jst, sync=sync[0] if sync else None
         )
         ctrl.auto.start()
+        ctrl.timer_ai = ctrl.auto.ask_timer  # 定時・長さは AI（開始の 10 分前に計画のセッション）
         print(f"オート：定時の起動 {ids['deployment']} を見に行く（振り返り→計画）")
 
     server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(log, ctrl))

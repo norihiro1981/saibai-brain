@@ -54,6 +54,44 @@ def plan_prompt(now: datetime, status: dict, target: dict, weather: dict | None 
     )
 
 
+def timer_prompt(
+    now: datetime,
+    at: datetime,
+    default_minutes: int,
+    status: dict,
+    target: dict,
+    weather: dict | None,
+) -> str:
+    """定時・長さは AI：開始の時刻は人が決めている＝分だけを決めさせる依頼文。"""
+    m = status.get("meter") or {}
+    g = status.get("guard") or {}
+    return (
+        f"今は {now.isoformat(timespec='minutes')}（JST）。定時の長さを決める時間です（定時・長さは AI）。\n"
+        f"開始は {at.isoformat(timespec='minutes')} に人が決めている＝変えない。決めるのは何分動かすかだけ。"
+        f"人の既定は {default_minutes} 分（答えが無ければこの分で動く）。\n"
+        f"今の値（受け手が読んだ時刻 {m.get('read_at')}）：気温 {m.get('temp_c')}℃・湿度 {m.get('rh_pct')}%・"
+        f"VPD {m.get('vpd_kpa')} kPa。狙いの VPD の帯：{target['vpd_low_kpa']}〜{target['vpd_high_kpa']} kPa。\n"
+        f"守りの層（今の組の線）：{g.get('lines_text')}（今日 {g.get('used_today_min')} 分動いた）。"
+        f"センサーの疑い：{g.get('sensor_problems') or 'なし'}。\n"
+        + prompt_block(weather)
+        + f"submit_plan を 1 回出す：runs は start={at.isoformat(timespec='minutes')} の 1 件だけ（分は 1〜"
+        f"{g.get('max_continuous_min')}）。今日は入れないなら runs を空。"
+        "/mnt/memory/saibai-experience/experience.md の効き目（入れて 15・30・60 分で VPD がいくつ動いたか）から分を出し、"
+        "理由にはどの経験の行を使ったかと数値と時刻を引く。結果を受けたら一言で締める。"
+    )
+
+
+def check_timer_plan(runs: list[Run], at: datetime, now: datetime) -> str | None:
+    """定時・長さは AI の計画を確かめる。開始の時刻は変えさせない。通れば None。"""
+    if now >= at:
+        return f"断った：開始の {at:%H:%M} を過ぎた（既定の分で動かしている）。"
+    if len(runs) > 1:
+        return f"断った：定時は 1 回だけ（開始は {at:%H:%M}・分だけ決める）。"
+    if runs and abs((runs[0].start - at).total_seconds()) >= 60:
+        return f"断った：開始は {at:%H:%M} に決まっている（{runs[0].start:%H:%M} は違う）＝分だけ決めて出し直す。"
+    return None
+
+
 def parse_plan(inp: dict) -> tuple[list[Run], list[dict], str | None]:
     """制御役の submit_plan の入力を、守りの層の形にする。読めなければ理由を返す。"""
     try:
@@ -160,7 +198,6 @@ class AutoRunner:
 
     # ---- 1 回の起動 ----
     def handle_run(self, review_sid: str, run_id: str | None = None) -> dict:
-        ids = self.ids
         rec: dict = {"run_id": run_id, "review_session": review_sid, "plans": []}
         self.current = rec
         rec["review_stop"] = self.wait_session(review_sid)
@@ -172,34 +209,11 @@ class AutoRunner:
         weather = self.ctrl.weather_summary()
         rec["weather"] = weather
         target = config.load()["target"]
-        s = self.client.beta.sessions.create(
-            agent=ids["control"],
-            environment_id=ids["env"],
-            title=f"オートの計画 {self.now():%m/%d %H:%M}",
-            budget={"type": "limit", "max_list_cost": {"amount": "100", "currency": "USD"}},
-            resources=[
-                store_resource(
-                    ids["experience"], "read_only", "経験（振り返りが書いた効き目）。読むだけ。"
-                ),
-                store_resource(ids["meter"], "read_only", "温湿度の記録。読むだけ。"),
-                store_resource(ids["actions"], "read_only", "操作の記録。読むだけ。"),
-                store_resource(
-                    ids["knowledge"], "read_only", "栽培の知識。専門家が読む。読むだけ。"
-                ),
-            ],
+        s = self._plan_session(
+            f"オートの計画 {self.now():%m/%d %H:%M}",
+            plan_prompt(self.now(), status, target, weather),
         )
         rec["plan_session"] = s.id
-        self.client.beta.sessions.events.send(
-            session_id=s.id,
-            events=[
-                {
-                    "type": "user.message",
-                    "content": [
-                        {"type": "text", "text": plan_prompt(self.now(), status, target, weather)}
-                    ],
-                }
-            ],
-        )
 
         def on_tool(ev) -> str:
             if ev.name != "submit_plan":
@@ -226,6 +240,86 @@ class AutoRunner:
         self.experience_info(cache_s=0)
         self.current, self.last = None, rec
         return rec
+
+    def _plan_session(self, title: str, prompt: str):
+        """計画のセッション（制御役＋専門家・置き場は全部読むだけ）を起こし、最初の依頼文を送る。"""
+        ids = self.ids
+        s = self.client.beta.sessions.create(
+            agent=ids["control"],
+            environment_id=ids["env"],
+            title=title,
+            budget={"type": "limit", "max_list_cost": {"amount": "100", "currency": "USD"}},
+            resources=[
+                store_resource(
+                    ids["experience"], "read_only", "経験（振り返りが書いた効き目）。読むだけ。"
+                ),
+                store_resource(ids["meter"], "read_only", "温湿度の記録。読むだけ。"),
+                store_resource(ids["actions"], "read_only", "操作の記録。読むだけ。"),
+                store_resource(
+                    ids["knowledge"], "read_only", "栽培の知識。専門家が読む。読むだけ。"
+                ),
+            ],
+        )
+        self.client.beta.sessions.events.send(
+            session_id=s.id,
+            events=[{"type": "user.message", "content": [{"type": "text", "text": prompt}]}],
+        )
+        return s
+
+    # ---- 定時・長さは AI（v0.7）----
+    def ask_timer(self, at: datetime, default_minutes: int) -> dict:
+        """開始の時刻（人が決めた）の約 10 分前に呼ぶ。制御役に分だけを決めさせ、受け付けた計画は
+        守りの層に「定時」として入る。返り＝{ok, minutes, reason, text}（ok=False なら受け手は既定の分で動かす）。"""
+        rec: dict = {"start": at.isoformat(), "default_minutes": default_minutes, "plans": []}
+        result = {"ok": False, "minutes": None, "reason": None, "text": "答えが来ない"}
+        weather = self.ctrl.weather_summary()
+        status = self.ctrl.status() | {"meter": self.meter_now()}
+        target = config.load()["target"]
+        if self.sync:
+            self.sync.kick_meter()
+        prompt = timer_prompt(self.now(), at, default_minutes, status, target, weather)
+        s = self._plan_session(f"定時の長さ {at:%m/%d %H:%M}", prompt)
+        rec["plan_session"] = s.id
+
+        def on_tool(ev) -> str:
+            if ev.name != "submit_plan":
+                return "この道具は無い"
+            runs, evidence, err = parse_plan(ev.input)
+            err = err or check_timer_plan(runs, at, self.now())
+            if err:
+                rec["plans"].append({"input": ev.input, "ok": False, "text": err})
+                result["text"] = err
+                return err
+            runs = [Run(r.start, r.minutes, "定時") for r in runs]
+            reason = ev.input.get("reason")
+            v = self.ctrl.submit(
+                runs,
+                evidence,
+                "定時",
+                extra={"reason": reason, "weather": weather, "by": "AI の分"},
+            )
+            minutes = sum(r.minutes for r in runs)
+            text = (
+                v.text() if runs else ("受け付けた：今日は入れない（0 分）。" if v.ok else v.text())
+            )
+            rec["plans"].append({"input": ev.input, "ok": v.ok, "text": text})
+            result.update(text=text)
+            if v.ok:
+                result.update(ok=True, minutes=minutes, reason=reason)
+                # 開始の直前に受け付けた時も、既定の分で上書きしないよう、すぐ受け手に知らせる
+                self.ctrl.note_timer_ai(at.date().isoformat(), result)
+            return text
+
+        # 開始の時刻までに答えが来なければ、受け手は既定の分で動かす（ここも開始で見に行くのをやめる）
+        deadline = max(30.0, (at - self.now()).total_seconds())
+        rec["plan_stop"] = self.wait_session(s.id, on_tool, deadline_s=deadline)
+        try:
+            rec["plan_usage"] = usage_of(self.client.beta.sessions.retrieve(session_id=s.id))
+        except Exception:
+            pass
+        rec["result"] = result
+        self._log(kind="timer_ai", **rec)
+        return result
 
     def meter_now(self) -> dict:
         f = self.meter_dir / f"meter_{self.now():%Y%m%d}.jsonl"

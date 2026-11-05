@@ -80,13 +80,16 @@ def set_auto(on: bool) -> dict:
 
 @server.tool(
     description=(
-        "定時（コードのタイマー・AI なし）の入・切と、毎日の開始の時刻（HH:MM）・運転の分。"
-        "時刻になると「今から minutes 分」の計画を守りの層に出す（断られることがある）。"
+        "定時の入・切と、毎日の開始の時刻（HH:MM）・運転の分。時刻になると「今から minutes 分」の計画を"
+        "守りの層に出す（断られることがある）。ai_minutes=true＝長さを AI に任せる：開始の 10 分前に制御役が"
+        "分を決め、答えが無ければ minutes（既定）で動く。省いた引数は今の設定のまま。"
     ),
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False),
 )
-def set_timer(on: bool, start: str | None = None, minutes: int | None = None) -> dict:
-    return _post("/timer", {"on": on, "start": start, "minutes": minutes})
+def set_timer(
+    on: bool, start: str | None = None, minutes: int | None = None, ai_minutes: bool | None = None
+) -> dict:
+    return _post("/timer", {"on": on, "start": start, "minutes": minutes, "ai_minutes": ai_minutes})
 
 
 @server.tool(

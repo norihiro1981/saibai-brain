@@ -228,6 +228,11 @@ class Controller:
             self.timer = json.loads(self.timer_file.read_text())
         except (OSError, ValueError):
             self.timer = {"on": False, "start": "12:00", "minutes": 60, "fired_on": None}
+        self.timer.setdefault("ai_minutes", False)
+        # 定時・長さは AI（v0.7）：(開始の時刻, 既定の分) → {ok, minutes, reason, text}。receiver がオートの口を付ける
+        self.timer_ai = None
+        self.timer_ai_result: dict | None = None  # {date, ok, minutes, reason, text}
+        self._spawn = lambda f, *a: threading.Thread(target=f, args=a, daemon=True).start()
         self._quiet = False
         self._lock = threading.RLock()
 
@@ -319,8 +324,27 @@ class Controller:
             self.latest = (temp, rh)
             self.guard.observe(Reading(read_at, rh, temp))
 
+    def _ask_timer_ai(self, at: datetime, default: int, today: str) -> None:
+        """裏の糸：制御役に分を聞く。答えが来ない・断った・失敗した時は ok=False（＝既定の分で動く）。"""
+        try:
+            r = self.timer_ai(at, default) or {}
+        except Exception as e:
+            r = {"ok": False, "text": f"聞けなかった：{type(e).__name__}"}
+        self.note_timer_ai(today, r)
+
+    def note_timer_ai(self, today: str, r: dict) -> None:
+        """制御役の分を覚える。一度受け付けた分は、後の「答えが来ない」で消さない。"""
+        with self._lock:
+            cur = self.timer_ai_result
+            if cur and cur.get("date") == today and cur.get("ok") and not r.get("ok"):
+                return
+            self.timer_ai_result = {"date": today, "ok": bool(r.get("ok"))} | {
+                k: r.get(k) for k in ("minutes", "reason", "text")
+            }
+
     def _timer_due(self) -> None:
-        """定時（コードのタイマー・AI なし）：毎日 start に minutes 分の計画を出す。2 分以内に気づけば出す。"""
+        """定時：毎日 start に minutes 分の計画を出す（2 分以内に気づけば出す）。長さを AI に任せる時は、
+        開始の 10 分前に制御役に分を聞き、受け付けた分で動かす。答えが無ければ人の既定の分で動かす。"""
         t = self.timer
         if not t.get("on"):
             return
@@ -328,8 +352,49 @@ class Controller:
         hh, mm = map(int, t["start"].split(":"))
         at = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
         today = now.date().isoformat()
+        ai = bool(t.get("ai_minutes")) and self.timer_ai is not None
+        ask_from = at - timedelta(minutes=10)
+        if ai and t.get("asked_on") != today and ask_from <= now < at:
+            t["asked_on"] = today
+            self._save_timer()
+            self.timer_ai_result = None
+            self._action("定時", "長さを AI に聞く", start=t["start"], minutes=t["minutes"])
+            self._spawn(self._ask_timer_ai, at, int(t["minutes"]), today)
         if t.get("fired_on") != today and at <= now < at + timedelta(minutes=2):
             t["fired_on"] = today
+            r = self.timer_ai_result if ai else None
+            r = r if r and r.get("date") == today else None
+            if r and r["ok"]:  # AI の計画は受け付けた時に守りの層へ入っている
+                t["last"] = {
+                    "date": today,
+                    "start": t["start"],
+                    "minutes": r["minutes"],
+                    "by": "AI の分",
+                    "reason": r.get("reason"),
+                    "ok": True,
+                }
+                self._save_timer()
+                self._action(
+                    "定時",
+                    "長さは AI で動く",
+                    minutes=r["minutes"],
+                    accepted=True,
+                    note=r.get("reason"),
+                )
+                return
+            why = None
+            if ai:
+                why = (r or {}).get("text") or "開始までに答えが来ない"
+            elif t.get("ai_minutes"):
+                why = "オートの口が無い（エージェントにつながっていない）"
+            t["last"] = {
+                "date": today,
+                "start": t["start"],
+                "minutes": t["minutes"],
+                "by": "既定の分" if t.get("ai_minutes") else "人の分",
+                "reason": why,
+                "ok": True,
+            }
             self._save_timer()
             ev = [
                 {
@@ -339,13 +404,28 @@ class Controller:
                     "time": now.isoformat(),
                 }
             ]
-            self.submit([Run(now, int(t["minutes"]), "定時")], ev, "定時")
+            v = self.submit(
+                [Run(now, int(t["minutes"]), "定時")],
+                ev,
+                "定時",
+                extra={"by": t["last"]["by"]} | ({"note": why} if why else {}),
+            )
+            if not v.ok:
+                t["last"]["ok"] = False
+                t["last"]["reason"] = v.text()
+                self._save_timer()
 
     def _save_timer(self) -> None:
         self.timer_file.write_text(json.dumps(self.timer, ensure_ascii=False))
 
-    def set_timer(self, on: bool, start: str | None = None, minutes: int | None = None) -> dict:
-        """定時の入切と、開始の時刻（HH:MM）・分。分は守りの層の 1 回の上限まで。"""
+    def set_timer(
+        self,
+        on: bool,
+        start: str | None = None,
+        minutes: int | None = None,
+        ai_minutes: bool | None = None,
+    ) -> dict:
+        """定時の入切と、開始の時刻（HH:MM）・分（＝長さを AI に任せた時の既定）・長さを AI に任せるか。"""
         with self._lock:
             t = dict(self.timer)
             if start is not None:
@@ -377,6 +457,8 @@ class Controller:
                 ):
                     t["fired_on"] = now.date().isoformat()
             t["on"] = bool(on)
+            if ai_minutes is not None:
+                t["ai_minutes"] = bool(ai_minutes)
             self.timer = t
             self._save_timer()
             self._action(
@@ -385,14 +467,16 @@ class Controller:
                 accepted=True,
                 minutes=t["minutes"],
                 start=t["start"],
+                ai_minutes=t["ai_minutes"],
             )
             return {"ok": True, "text": self._timer_text(), "timer": self.timer}
 
     def _timer_text(self) -> str:
         t = self.timer
+        ai = "・長さは AI（答えが無ければこの分）" if t.get("ai_minutes") else ""
         if not t.get("on"):
-            return f"定時は切（設定：毎日 {t['start']} から {t['minutes']} 分）"
-        return f"定時は入：毎日 {t['start']} から {t['minutes']} 分（守りの層を通す）"
+            return f"定時は切（設定：毎日 {t['start']} から {t['minutes']} 分{ai}）"
+        return f"定時は入：毎日 {t['start']} から {t['minutes']} 分{ai}（守りの層を通す）"
 
     def tick(self, check_plug: bool) -> None:
         with self._lock:
