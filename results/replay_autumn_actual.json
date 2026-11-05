@@ -3,7 +3,7 @@
  "variant": "actual",
  "window": [
   "2026-10-20",
-  "2026-10-26"
+  "2026-10-23"
  ],
  "sim": {
   "k_per_h": 0.05848035476425734,
@@ -13,10 +13,10 @@
  },
  "guard": "再生：湿度 75% 以上は入れない・85% で切る",
  "metrics": {
-  "hours": 168.0,
-  "vpd_in_band_h": 126.4,
+  "hours": 96.0,
+  "vpd_in_band_h": 69.6,
   "vpd_above_h": 25.6,
-  "vpd_below_h": 16.0,
+  "vpd_below_h": 0.8,
   "humidifier_min": 359.0,
   "switch_on_count": 2,
   "plans": 0,

@@ -1,6 +1,6 @@
 """再生と評価（設計書 v0.8 §7）：同じ窓を 4 通り（実運転・閾値だけ・1 体・チーム）で流す。
 
-- 窓＝季節ごとに 7 日（夏 9/3〜9/9・秋 10/20〜10/26）。起動＝再生の時計で 3 時間ごと（窓 1 つで 56 回）。
+- 窓＝季節ごとに 4 日（夏 9/3〜9/6・秋 10/20〜10/23）。起動＝再生の時計で 3 時間ごと（窓 1 つで 32 回）。
 - 部屋＝模擬の栽培室（sim.Room＝記録＋加湿器の差）。判断＝守りの層の再生の組（75%／85% は残す）。
 - **先読みの禁止**：各回に渡すのはその時刻までの記録だけ（`World` が作る・テストで確かめる）。
   再生ごとに記憶の置き場（温湿度・操作・経験）を新しく作る。経験の最初の版は窓の始まりより前の記録だけから。
@@ -34,6 +34,7 @@ VARIANTS = ("actual", "threshold", "single", "team")
 VARIANT_JA = {"actual": "実運転", "threshold": "閾値だけ", "single": "1 体", "team": "チーム"}
 SEASON_JA = {"summer": "夏", "autumn": "秋"}
 WAKE_EVERY = timedelta(hours=3)
+WAKES_PER_WINDOW = 32  # 4 日×8 回
 THRESHOLD_EVERY = timedelta(minutes=10)
 THRESHOLD_RH = 70.0  # 知識の §1「アラビカの生育条件 RH 70〜80%」の下の端（設計書 §7）
 THRESHOLD_MIN = 30  # 加湿器は 30 分で +12〜16 pt（11/3）
@@ -572,8 +573,8 @@ class AgentPolicy:
             for inp in rec["tool_inputs"]:
                 rp.submit(inp, now, "オート")
             return rec
-        if self.n_paid >= 4 and self.total_cents / self.n_paid * 56 > STOP_CENTS:
-            rp.stopped = f"{now:%m/%d %H:%M} で止めた：1 回の平均 {self.total_cents / self.n_paid:.1f}¢×56 回が $10 を越える見込み"
+        if self.n_paid >= 4 and self.total_cents / self.n_paid * WAKES_PER_WINDOW > STOP_CENTS:
+            rp.stopped = f"{now:%m/%d %H:%M} で止めた：1 回の平均 {self.total_cents / self.n_paid:.1f}¢×{WAKES_PER_WINDOW} 回が $10 を越える見込み"
             return {"wake": key, "skipped": rp.stopped}
         if self.max_new is not None and self.new >= self.max_new:
             rp.stopped = f"試し：新しい起動 {self.max_new} 回で止めた（{now:%m/%d %H:%M} の前）"

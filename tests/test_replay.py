@@ -69,8 +69,8 @@ def probed(request):
 
 def test_every_wake_sees_only_the_past(probed):
     season, p, rp, res = probed
-    assert p.seen == 56  # 7 日×8 回
-    assert res["metrics"]["wakes"] == 56
+    assert p.seen == rpl.WAKES_PER_WINDOW == 32  # 4 日×8 回
+    assert res["metrics"]["wakes"] == 32
 
 
 def test_experience_seed_uses_only_records_before_the_window(probed):
