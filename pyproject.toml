@@ -15,6 +15,7 @@ dependencies = [
 saibai-receiver = "saibai.receiver:main"
 saibai-mcp = "saibai.mcp_server:main"
 saibai-agents = "saibai.agents:main"
+saibai-weather-history = "saibai.weather_history:main"
 
 [project.optional-dependencies]
 # 温湿度計の Bluetooth を直接読む予備の道（主の道はクラウドの 30 秒）
