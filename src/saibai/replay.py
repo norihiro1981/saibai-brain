@@ -484,6 +484,8 @@ class AgentPolicy:
         self.uploaded: dict[str, str] = {}
         self.total_cents = sum((r.get("cost_cents") or 0) for r in self.cache.values())
         self.n_paid = len(self.cache)
+        self.max_new: int | None = None  # 試し：この数だけ新しく叩いたら止める
+        self.new = 0
 
     def _save(self) -> None:
         self.state_file.write_text(json.dumps(self.state, ensure_ascii=False, indent=1))
@@ -573,6 +575,10 @@ class AgentPolicy:
         if self.n_paid >= 4 and self.total_cents / self.n_paid * 56 > STOP_CENTS:
             rp.stopped = f"{now:%m/%d %H:%M} で止めた：1 回の平均 {self.total_cents / self.n_paid:.1f}¢×56 回が $10 を越える見込み"
             return {"wake": key, "skipped": rp.stopped}
+        if self.max_new is not None and self.new >= self.max_new:
+            rp.stopped = f"試し：新しい起動 {self.max_new} 回で止めた（{now:%m/%d %H:%M} の前）"
+            return {"wake": key, "skipped": rp.stopped}
+        self.new += 1
         self.ensure_stores(rp.world)
         n_up = self.upload(rp.world, now)
         runner = self._runner(now)
@@ -715,6 +721,8 @@ def main() -> None:
 
         load_dotenv(ROOT / ".env")
         policy = AgentPolicy(variant, season, client=anthropic.Anthropic())
+        if len(args) > 2:  # 試し：uv run saibai-replay autumn team 1
+            policy.max_new = int(args[2])
     t0 = time.monotonic()
     rp = Replay(season, variant, policy)
     res = rp.run()
