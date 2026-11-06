@@ -29,15 +29,16 @@ ROOT = Path(__file__).resolve().parent.parent
 BUILD = ROOT / "video" / "assets" / "build"
 OUT = ROOT / "video" / "out"
 W, H = 1920, 1080
-ORDER = "O⓪A①②③④⑤⑥⑦⑧"  # O＝冒頭の実写・A＝計器盤から本物の加湿器を動かす実写
+ORDER = "O⓪A①②③④⑤⑥⑦⑧⑨"  # O＝冒頭の実写・A＝計器盤から本物の加湿器を動かす実写
 AIVIS = "http://127.0.0.1:10101"
 VOICE_ID = 1937616896  # にせ（低めで落ち着いた講義調・ACML 1.0＝商用可・クレジット任意）
 LEAD, GAP = 0.5, 0.45  # 場面の頭の間・行と行の間
-TAIL = {"⓪": 1.0, "⑧": 4.5}  # 場面の後ろの間（ほかは 0.8）
+TAIL = {"⓪": 1.0, "⑨": 4.5}  # 場面の後ろの間（ほかは 0.8）
 # 冒頭の実写の並び（手元だけ＝git に入らない）。無ければ札で代える。形：
 # {"parts": [{"clip": "norihiro_sample/IMG_0001.mov", "from": 0, "to": 30, "gain_db": 12},
 #            {"black": 1.0}, {"title": 2.5, "turn": true}]}
 # turn＝BGM がここで長調に移る（無ければ ① の頭）
+# "after": [秒, gain_db]＝実写の音をその秒から 0.6 秒かけて gain_db に変える（「寒い」の後を下げる）
 # "artifact"：{"clip": ..., "from": 0, "to": 18, "gain_db": 12, "beats": {"on": 0.3, "mist": 4.6, "off": 9.4, "auto": 14.3}}
 # beats＝実写の中の時刻（入れる・霧が出る・切る・オートを入れる）＝札を出す時刻
 OPENING = ROOT / "video" / "assets" / "opening.json"
@@ -65,7 +66,7 @@ def read_script() -> dict[str, list[str]]:
     scenes: dict[str, list[str]] = {}
     cur = None
     for line in (ROOT / "video" / "script.md").read_text().splitlines():
-        m = re.match(r"## ([⓪①②③④⑤⑥⑦⑧])", line)
+        m = re.match(r"## ([⓪①②③④⑤⑥⑦⑧⑨])", line)
         if m:
             cur = m.group(1)
             scenes[cur] = []
@@ -305,8 +306,8 @@ async function seek(v, x) {
   await new Promise(r => { v.addEventListener("seeked", r, { once: true }); v.currentTime = x; });
 }
 window.__frame = async t => {
-  if (!__init) { __init = true; M = $("main"); if (M) { M.style.transform = "none"; } if (typeof setup === "function") setup(); }
-  subs(t); if (typeof render === "function") await render(t);
+  if (!__init) { __init = true; M = $("main"); if (M) { M.style.transform = "none"; } if (typeof __vSetup === "function") __vSetup(); }
+  subs(t); if (typeof __vRender === "function") await __vRender(t);
   $("#v-subbg").style.opacity = C.length ? 1 : 0;
 };
 """
@@ -326,7 +327,10 @@ def wrap(head: str, body: str, js: str, cues: list[dict], total: float, data: di
         + f"window.CUES = {json.dumps(cues, ensure_ascii=False)}; window.TOTAL = {total:.3f}; "
         + f"window.D = {json.dumps(data, ensure_ascii=False)}; const GAP_S = {GAP};"
         + LIB
-        + js
+        # 場面の setup・render は名を替える（計器盤にも render があり、上書きすると記録を描かなくなる）
+        + js.replace("function render(", "function __vRender(").replace(
+            "function setup(", "function __vSetup("
+        )
         + "}</script>"
     )
 
@@ -410,17 +414,17 @@ def scene_pages(rec: dict):
 <div id="cap" class="mut" style="left:1400px;top:150px;font-size:24px">秋の記録・ある 1 日</div>
 <svg id="ch" width="1600" height="600" style="left:160px;top:240px;overflow:visible">
   <rect id="band" x="0" width="1600" fill="rgba(143,192,159,.16)"/>
-  <text id="bandl" x="10" fill="#8fc09f" font-size="24">狙いの帯</text>
+  <text id="bandl" x="10" fill="#8fc09f" font-size="24">ちょうどいい空気</text>
   <path id="red" fill="rgba(239,125,111,.45)"/>
   <g id="hum"></g>
   <path id="out" fill="none" stroke="#7fb3d4" stroke-width="4" stroke-dasharray="10 8"/>
   <path id="room" fill="none" stroke="#e8efe9" stroke-width="5"/>
   <g id="ax" fill="#98a79d" font-size="22"></g>
   <text id="outl" fill="#7fb3d4" font-size="26">外の湿度</text>
-  <text id="rooml" fill="#e8efe9" font-size="26">部屋の空気の乾き（VPD）</text>
+  <text id="rooml" fill="#e8efe9" font-size="26">部屋の空気の乾き</text>
 </svg>
 <div id="hand" class="chip amber" style="width:430px;font-size:26px">人が気づいて入れたのは、午後</div>
-<div id="burd" style="left:1400px;top:196px;font-size:30px;color:#ef7d6f;font-weight:700">帯の外＝作物に負担</div>
+<div id="burd" style="left:1400px;top:196px;font-size:30px;color:#ef7d6f;font-weight:700">乾きすぎ＝作物に負担</div>
 """
         js = """
 const R = D.room, O = D.out, H0 = 4, H1 = 24, WX = 1600, HY = 600;
@@ -475,25 +479,74 @@ function render(t) {
         body = f"""
 <video id="vid" src="{a.get("uri", "")}" muted preload="auto" playsinline
   style="left:0;top:0;width:1920px;height:1080px;object-fit:cover"></video>
-<div id="tag" class="chip" style="left:60px;top:50px;font-size:24px;padding:10px 20px">実写・等速　計器盤（Artifact）→ 本物の加湿器</div>
-<div id="s0" class="chip" style="left:60px;top:900px;font-size:34px;font-weight:700">手で「入れる」</div>
-<div id="s1" class="chip" style="left:1180px;top:900px;font-size:34px;font-weight:700">守りの層を通って、加湿器が動く</div>
-<div id="s2" class="chip" style="left:60px;top:900px;font-size:34px;font-weight:700">「切る」</div>
-<div id="s3" class="chip amber" style="left:60px;top:900px;font-size:34px;font-weight:700">「オート」を入れる　→　あとは AI が 3 時間ごとに決める</div>
+<div id="tag" class="chip" style="right:40px;top:40px;font-size:36px;font-weight:700;padding:14px 26px;white-space:nowrap">実写　計器盤（Artifact）→ 本物の加湿器</div>
+<div class="ring" id="r0"></div><div class="ring" id="r1"></div><div class="ring" id="r2"></div>
+<div id="s0" class="chip act" style="font-size:52px;font-weight:700">手動操作：入れる</div>
+<div id="s1" class="chip act" style="font-size:52px;font-weight:700">本物の加湿器が動く</div>
+<div id="s2" class="chip act" style="font-size:52px;font-weight:700">手動操作：切る</div>
+<div id="s3" class="chip act amber" style="font-size:52px;font-weight:700">オート動作に移行<span style="font-size:34px;font-weight:500;color:#cfd9d1">　→　あとは AI が 3 時間ごとに決める</span></div>
+<style>
+.ring {{ position:absolute; width:120px; height:120px; margin:-60px 0 0 -60px; border-radius:50%;
+  border:7px solid #f0b45a; box-shadow:0 0 30px rgba(240,180,90,.8); opacity:0; }}
+.act {{ left:0; right:0; margin:0 auto; width:fit-content; top:880px; white-space:nowrap; padding:18px 40px; }}
+</style>
 """
         js = f"""
 const FROM = {a.get("from", 0)}, B = {json.dumps(b)};
+// 押した所（1920×1080 の画面の上）：手動の入れる・手動の切る・オートの入れる
+const RING = [[B.on, 686, 142], [B.off, 764, 142], [B.auto, 472, 323]];
 function win(t, a, z) {{ return E(P(t, a, .35)) * (1 - P(t, z - .35, .35)); }}
 async function render(t) {{
   fade("#tag", win(t, .2, T + 1), 0);
-  fade("#s0", win(t, B.on, B.mist - .2), 10);
-  fade("#s1", win(t, B.mist + .3, B.off - .1), 10);
-  fade("#s2", win(t, B.off, B.auto - .2), 10);
-  fade("#s3", win(t, B.auto, T + 1), 10);
+  fade("#s0", win(t, B.on, B.mist - .1), 0);
+  fade("#s1", win(t, B.mist + .2, B.off - .1), 0);
+  fade("#s2", win(t, B.off, B.auto - .2), 0);
+  fade("#s3", win(t, B.auto, T + 1), 0);
+  RING.forEach(([at, x, y], i) => {{
+    const r = $("#r" + i), k = P(t, at - .15, 1.3);
+    r.style.left = x + "px"; r.style.top = y + "px";
+    r.style.opacity = k > 0 && k < 1 ? (1 - k) * 1.2 : 0;
+    r.style.transform = `scale(${{.5 + 1.1 * E(k)}})`;
+  }});
   $("#v-black").style.opacity = 1 - P(t, 0, .4) + P(t, T - .4, .4);
   await seek($("#vid"), FROM + t);
 }}"""
         return plain(body, js, cues, total, {})
+
+    # ① 画面でできること：計器盤の 4 つの行 ---------------------------------------------
+    def pUI(cues, total):
+        X = 1180
+        rows = [
+            ("手動", "人が、今すぐ入れる・切る"),
+            ("定時", "毎日の時刻を決めて動かす"),
+            ("オート", "時刻も長さも、AI が決める"),
+            ("止める", "何より先に、人が止められる"),
+        ]
+        chips = "".join(
+            f'<div id="u{i}" class="chip{" amber" if i == 2 else (" red" if i == 3 else "")}" '
+            f'style="left:{X}px;top:{300 + i * 150}px;width:640px;font-size:30px">'
+            f'<b style="font-size:38px">{a}</b>　{b}</div>'
+            for i, (a, b) in enumerate(rows)
+        )
+        body = f"""
+<div id="k" class="kicker" style="left:{X}px;top:80px">計器盤（Artifact）</div>
+<div id="h" class="head" style="left:{X}px;top:124px;font-size:54px">画面ひとつで、4 通り</div>
+{chips}
+"""
+        js = """
+let OC;
+function setup() { OC = off(".controls"); }
+function render(t) {
+  cam(70, 150 - OC.y);
+  fade("#k", E(P(t, .1, .5))); fade("#h", E(P(t, .25, .6)));
+  const ts = [w(0, "手で") - .2, w(0, "時刻") - .2, w(0, "AI") - .2, w(1, "止める") - .2];
+  ts.forEach((a, i) => {
+    fade("#u" + i, BK(P(t, a, .5)), 16, .92);
+    const nx = i < 3 ? ts[i + 1] : T + 1;
+    hl(".controls .mode:nth-of-type(" + (i + 1) + ")", t > a && t < nx);
+  });
+}"""
+        return dash(rec, body, js, cues, total, {})
 
     # ① 種明かし：Managed Agents（雲）と手元 ---------------------------------------
     def p1(cues, total):
@@ -567,7 +620,7 @@ function render(t) {
 <div id="k" class="kicker" style="left:{X}px;top:60px">目指すところ 1</div>
 <div id="h" class="head" style="left:{X}px;top:100px;font-size:50px">先を読んで決める</div>
 <div id="cap" class="mut" style="left:{X}px;top:186px;font-size:24px">11/5 15:04 の回（本物の答え）</div>
-<div id="c1" class="chip" style="width:680px">14:54 の VPD <b class="num">0.851</b> kPa<span class="mut">（帯 0.4〜0.8 の上）</span></div>
+<div id="c1" class="chip" style="width:680px">14:54 の空気の乾き <b class="num">0.851</b><span class="mut">（ちょうどいいのは 0.8 まで）</span></div>
 <div id="c2" class="chip" style="width:680px">経験：秋の傾向 <b class="num">26</b> 回・15 分で <b class="num">−0.238</b></div>
 <div id="barbox" style="left:{X}px;top:470px;width:680px;height:96px">
   <div id="bar" style="position:absolute;left:0;top:0;height:96px;width:680px;border-radius:12px;background:#2a3a30;border:2px solid #4a5c50"></div>
@@ -681,8 +734,7 @@ function render(t) {
 
     # ⑤ 越えられない壁 ------------------------------------------------------------
     def p5(cues, total):
-        tail = rec["pytest"][-1:]
-        body = f"""
+        body = """
 <div id="k" class="kicker" style="left:140px;top:80px">安全</div>
 <div id="h" class="head" style="left:140px;top:126px">越えられない壁</div>
 <div id="dia" style="left:0;top:0;width:1920px;height:1080px">
@@ -693,27 +745,22 @@ function render(t) {
   <div id="wall" class="card" style="position:absolute;left:820px;top:240px;width:300px;height:600px;border-width:4px">
     <div style="font-size:34px;font-weight:700;text-align:center">守りの層</div>
     <div class="mut" style="font-size:20px;text-align:center">決まった規則のコード</div>
-    <div style="position:absolute;left:24px;top:330px;font-size:21px;line-height:1.75;color:#cfd9d1">連続 60 分まで<br>1 日 120 分まで<br>古い値で動かさない<br>15 分で湿度が上がらなければ切る<br><b style="color:#ef7d6f">「止める」が最優先</b></div>
+    <div style="position:absolute;left:24px;top:330px;font-size:28px;line-height:1.8;color:#cfd9d1">続けて 60 分まで<br>1 日 120 分まで<br><b style="color:#ef7d6f">「止める」が最優先</b></div>
   </div>
   <div id="plug" class="card" style="position:absolute;left:1480px;top:330px;width:300px;height:200px;text-align:center;padding-top:40px">
     <div style="font-size:44px;font-weight:700">加湿器</div><div class="mut" style="font-size:24px">受け手だけが動かす</div></div>
   <div id="pa" class="chip red" style="position:absolute;width:250px;font-size:28px;font-weight:700">入 90 分</div>
-  <div id="no" class="chip red" style="position:absolute;width:330px;font-size:22px">断った：連続 60 分まで</div>
+  <div id="no" class="chip red" style="position:absolute;width:330px;font-size:22px">断った：続けて 60 分まで</div>
   <div id="pb" class="chip" style="position:absolute;width:250px;font-size:28px;font-weight:700">入 20 分</div>
 </div>
-<div id="term" style="left:330px;top:250px;width:1260px;height:560px;overflow:hidden;background:#070a08;border:2px solid #2e3a32;border-radius:18px;padding:34px 40px;font:28px/1.6 'IBM Plex Mono',monospace;color:#cfe3d4">
-  <div style="color:#8fc09f">$ uv run pytest -q tests/test_guard.py</div>
-  <div style="margin-top:22px;font-family:'Zen Kaku Gothic New',sans-serif">ランダムな計画 <b id="rn" class="num" style="color:#f0b45a">0</b> 通り × 2 日<span class="mut">（湿度の歩き・跳び・止まり・読めない区間も混ぜる）</span></div>
-  <div style="font-family:'Zen Kaku Gothic New',sans-serif">上限を越えた回 <b class="num" style="color:#6cc28b">0</b></div>
-  <div id="pt" style="margin-top:28px;white-space:pre;color:#6cc28b">{esc(chr(10).join(tail))}</div>
-</div>
+<div id="big" style="left:1180px;top:118px;width:620px;text-align:right;font-size:60px;font-weight:700;color:#6cc28b">上限は、越えない</div>
 """
         js = """
 function render(t) {
   fade("#k", E(P(t, .1, .5))); fade("#h", E(P(t, .25, .6)));
   fade("#ai", E(P(t, .3, .6))); fade("#plug", E(P(t, .45, .6)));
   const tx = w(0, "触らない");
-  const wallIn = w(0, "守りの層") - .4;
+  const wallIn = w(1, "守りの層") - .4;
   $("#direct").style.opacity = E(P(t, .6, .5)) * (1 - P(t, wallIn, .4));
   fade("#x", BK(P(t, tx - .2, .5)) * (1 - P(t, wallIn, .4)), 0, .5);
   fade("#wall", BK(P(t, wallIn, .6)), 0, .85);
@@ -729,61 +776,64 @@ function render(t) {
   const on = P(t, tb + 1.8, .3);
   $("#plug").style.borderColor = on > 0 ? "#6cc28b" : "#2e3a32";
   $("#plug").style.boxShadow = `0 0 ${60 * on}px rgba(108,194,139,${.6 * on})`;
-  const tt = Math.max(c(1) + .3, tb + 2.2);
-  $("#dia").style.opacity = 1 - .8 * P(t, tt, .5);
-  fade("#term", E(P(t, tt, .6)), 40);
-  $("#rn").textContent = Math.round(L(0, 120, EIO(P(t, tt + .6, 2.2))));
-  fade("#pt", E(P(t, tt + 2.9, .4)), 8);
+  fade("#big", BK(P(t, w(2, "上限") - .2, .6)), 20, .9);
 }"""
         return plain(body, js, cues, total, {})
 
-    # ⑥ 結果：帯の中に保てた時間（再生の比較の表） -----------------------------------
+    # ⑦ 腕試し：過去の記録で流し直す（流れの図 1 本と秋の棒 2 本） ---------------------
     def p6(cues, total):
-        names = ["実運転", "閾値だけ", "1 体", "チーム"]
         tb = rec["replay"]
-
-        def group(season, x0, gid):
-            bars = ""
-            for i, n in enumerate(names):
-                v = tb[season][n]
-                col = "#f0b45a" if n == "チーム" else ("#8fc09f" if n == "実運転" else "#4a5c50")
-                bars += (
-                    f'<div style="position:absolute;left:{x0 + i * 170}px;top:780px;width:120px;text-align:center;font-size:24px" class="mut">{n}</div>'
-                    f'<div class="bar {gid}" data-v="{v}" style="position:absolute;left:{x0 + i * 170}px;width:120px;top:770px;height:0;background:{col};border-radius:10px 10px 0 0"></div>'
-                    f'<div class="val {gid}" data-v="{v}" style="position:absolute;left:{x0 + i * 170}px;width:120px;text-align:center;font-size:30px;font-weight:700" class="num">{v:g}</div>'
-                )
-            return bars
-
+        hu, ai = tb["秋"]["実運転"], tb["秋"]["チーム"]
+        sh, sa = tb["夏"]["実運転"], tb["夏"]["チーム"]
+        steps = [
+            ("過去の記録", "夏と秋・4 日ずつ"),
+            ("AI に 1 日ずつ渡す", "先の記録は見せない"),
+            ("人の実際と比べる", "ちょうどいい空気だった時間"),
+        ]
+        flow = "".join(
+            f'<div id="f{i}" class="card" style="left:{160 + i * 560}px;top:250px;width:480px;height:150px;text-align:center;padding-top:28px">'
+            f'<div style="font-size:36px;font-weight:700">{a}</div><div class="mut" style="font-size:24px;margin-top:8px">{b}</div></div>'
+            for i, (a, b) in enumerate(steps)
+        )
+        arrows = "".join(
+            f'<div id="fa{i}" style="left:{650 + i * 560}px;top:290px;font-size:56px;color:#f0b45a">→</div>'
+            for i in range(2)
+        )
+        W0 = 1100  # 96 時間の棒の長さ
         body = f"""
 <div id="k" class="kicker" style="left:160px;top:80px">結果</div>
-<div id="h" class="head" style="left:160px;top:124px">狙いの帯の中に保てた時間</div>
-<div id="cap" class="mut" style="left:160px;top:210px;font-size:24px">同じ 4 日（96 時間）を、4 通りで流し直した（時間）</div>
-<div id="sa" style="left:160px;top:250px;width:700px;font-size:40px;font-weight:700">秋</div>
-<div id="su" style="left:1000px;top:250px;width:700px;font-size:40px;font-weight:700">夏</div>
-<div id="ga">{group("秋", 160, "ga")}</div>
-<div id="gs">{group("夏", 1000, "gs")}</div>
-<div id="base" style="left:140px;top:770px;width:1640px;border-top:2px solid #4a5c50"></div>
-<div id="na" class="chip amber" style="left:330px;top:250px;width:520px;font-size:24px">チームが、実運転より長く保った</div>
-<div id="ns" class="chip red" style="left:1170px;top:250px;width:520px;font-size:24px">チームは、実運転に届かなかった</div>
-<div id="nt" class="mut" style="left:160px;top:815px;font-size:20px">再生＝本物の記録に、加湿器を入れた差だけを模擬の式で足した部屋（実運転は記録そのもの）・先の記録は渡さない</div>
-<div id="wt" class="chip amber" style="left:310px;top:852px;width:1300px;font-size:27px;text-align:center;padding:8px 22px">水のやりすぎの疑い：AI が示したのは 9/3　→　人が記録に書いたのは 9/19</div>
+<div id="h" class="head" style="left:160px;top:124px">過去の記録で、腕試し</div>
+{flow}{arrows}
+<div id="cap" style="left:160px;top:470px;font-size:34px;font-weight:700">秋の 4 日：ちょうどいい空気だった時間<span class="mut" style="font-size:24px;font-weight:400">（96 時間のうち）</span></div>
+<div id="lh" style="left:160px;top:560px;font-size:36px;font-weight:700;width:120px">人</div>
+<div id="bh" style="left:300px;top:552px;height:64px;width:0;background:#8fc09f;border-radius:0 12px 12px 0"></div>
+<div id="vh" class="num" style="top:560px;font-size:36px;font-weight:700">{hu:g} 時間</div>
+<div id="la" style="left:160px;top:670px;font-size:36px;font-weight:700;width:120px;color:#f0b45a">AI</div>
+<div id="ba" style="left:300px;top:662px;height:64px;width:0;background:#f0b45a;border-radius:0 12px 12px 0"></div>
+<div id="va" class="num" style="top:670px;font-size:36px;font-weight:700;color:#f0b45a">{ai:g} 時間</div>
+<div id="plus" class="chip amber" style="left:1500px;top:600px;font-size:44px;font-weight:700">＋{ai - hu:.1f} 時間</div>
+<div id="su" class="chip red" style="left:160px;top:790px;font-size:30px">夏は、まだ人に届かない<span class="mut" style="font-size:24px">（人 {sh:g}・AI {sa:g} 時間）</span></div>
+<div id="nt" class="mut" style="left:1000px;top:808px;font-size:20px;width:780px">腕試し＝本物の記録に、加湿器の差だけを模擬の式で足した部屋</div>
 """
-        js = """
-function grow(cls, k) {
-  $$(".bar." + cls).forEach(b => { const hh = 420 * b.dataset.v / 96 * EIO(k); b.style.height = hh + "px"; b.style.top = (770 - hh) + "px"; });
-  $$(".val." + cls).forEach(b => { b.style.top = (770 - 420 * b.dataset.v / 96 * EIO(k) - 44) + "px"; b.style.opacity = P(k, .7, .3); });
-}
-function render(t) {
-  fade("#k", E(P(t, .1, .5))); fade("#h", E(P(t, .25, .6))); fade("#cap", E(P(t, .5, .6)));
-  fade("#base", E(P(t, .4, .5)), 0); fade("#sa", E(P(t, .5, .5))); fade("#su", E(P(t, .6, .5))); fade("#nt", E(P(t, .8, .5)));
-  grow("ga", P(t, w(0, "秋は") - .3, 1.4));
-  grow("gs", P(t, w(0, "夏は") - .3, 1.4));
-  fade("#na", BK(P(t, w(0, "長く"), .5)), 10, .9);
-  fade("#ns", BK(P(t, w(0, "届かない"), .5)), 10, .9);
-  const tw = c(1) - .2;
-  ["#ga", "#gs", "#sa", "#su", "#base", "#na", "#ns"].forEach(s => { $(s).style.filter = `brightness(${1 - .55 * P(t, tw, .5)})`; });
-  fade("#wt", BK(P(t, tw, .6)), 20, .92);
-}"""
+        js = f"""
+const W0 = {W0}, HU = {hu}, AI = {ai};
+function bar(id, vid, v, k) {{
+  const ww = W0 * v / 96 * EIO(k);
+  $(id).style.width = ww + "px";
+  pos(vid, 300 + ww + 24, parseFloat($(vid).style.top)); $(vid).style.opacity = P(k, .6, .4);
+}}
+function render(t) {{
+  fade("#k", E(P(t, .1, .5))); fade("#h", E(P(t, .25, .6)));
+  const t0 = c(0);
+  for (let i = 0; i < 3; i++) fade("#f" + i, BK(P(t, t0 + .2 + i * .6, .5)), 16, .92);
+  for (let i = 0; i < 2; i++) fade("#fa" + i, E(P(t, t0 + .5 + i * .6, .4)), 0);
+  const tb = c(1) - .3;
+  fade("#cap", E(P(t, tb, .5))); fade("#lh", E(P(t, tb, .4))); fade("#la", E(P(t, tb + .2, .4)));
+  bar("#bh", "#vh", HU, P(t, tb + .2, 1.2));
+  bar("#ba", "#va", AI, P(t, w(1, "人より") - .1, 1.4));
+  fade("#plus", BK(P(t, w(1, "保てた") - .2, .5)), 12, .9);
+  fade("#su", E(P(t, c(2) - .2, .5)), 10); fade("#nt", E(P(t, c(2) + .2, .5)));
+}}"""
         return plain(body, js, cues, total, {})
 
     # ⑦ 道：今・次・最終 ------------------------------------------------------------
@@ -870,14 +920,15 @@ async function render(t) {{
         "title": p_title,
         "black": p_black,
         "A": pA,
-        "①": p1,
-        "②": p2,
-        "③": p3,
-        "④": p4,
-        "⑤": p5,
-        "⑥": p6,
-        "⑦": p7,
-        "⑧": p8,
+        "①": pUI,
+        "②": p1,
+        "③": p2,
+        "④": p3,
+        "⑤": p4,
+        "⑥": p5,
+        "⑦": p6,
+        "⑧": p7,
+        "⑨": p8,
     }
 
 
@@ -988,6 +1039,16 @@ def timeline(scenes, keys, args, use_aivis, opening, artifact=None):
     return plan, voices, t0
 
 
+def clip_gain(c: dict) -> str:
+    """実写の音の大きさ。after があれば、その秒から 0.6 秒かけて下げる（上げる）。"""
+    g0 = 10 ** (c.get("gain_db", 0) / 20)
+    if "after" not in c:
+        return f"volume={g0:.4f}"
+    at, db = c["after"]
+    g1 = 10 ** (db / 20)
+    return f"volume='{g0:.4f}+({g1:.4f}-{g0:.4f})*clip((t-{at})/0.6,0,1)':eval=frame"
+
+
 def narration(
     voices, total: float, out: Path, bgm: Path | None, bgm_db: float, clips: list[dict]
 ) -> None:
@@ -1000,7 +1061,8 @@ def narration(
     mix = "".join(f"[a{i}]" for i in range(len(voices)))
     flt.append(
         f"{mix}amix=inputs={len(voices)}:normalize=0,apad,atrim=0:{total:.3f},"
-        "loudnorm=I=-16:TP=-1.5:LRA=11[vn]"
+        # loudnorm の後は時刻を振り直す（そのままだと amix で実写の音が 1 秒ほど遅れて混ざる）
+        "loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000,asetpts=N/SR/TB[vn]"
     )
     n = len(voices)
     for j, c in enumerate(clips):
@@ -1008,7 +1070,7 @@ def narration(
         ms = int(c["at"] * 1000)
         flt.append(
             f"[{n + j}:a:0]atrim={c['from']}:{c['to']},asetpts=PTS-STARTPTS,aresample=48000,"
-            f"aformat=channel_layouts=stereo,volume={c.get('gain_db', 0)}dB,"
+            f"aformat=channel_layouts=stereo,{clip_gain(c)},"
             f"afade=t=out:st={c['len'] - 0.4:.3f}:d=0.4,adelay={ms}:all=1,apad,atrim=0:{total:.3f}[c{j}]"
         )
     src = "[vn]" + "".join(f"[c{j}]" for j in range(len(clips)))
@@ -1155,6 +1217,11 @@ def main() -> None:
             pg.wait_for_load_state("load")
             pg.evaluate("document.fonts.ready")
             pg.wait_for_timeout(800)  # 計器盤が記録を描き終えるのを待つ
+            pg.wait_for_function(
+                "!document.querySelector('#plugState') ||"
+                " document.querySelector('#plugState').textContent.trim() !== '—'",
+                timeout=15000,
+            )
             pg.evaluate(
                 "Promise.all([...document.querySelectorAll('video')].map(v => v.readyState >= 2 ? 1 :"
                 " new Promise(r => v.addEventListener('loadeddata', r, { once: true }))))"
