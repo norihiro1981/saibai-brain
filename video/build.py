@@ -29,11 +29,11 @@ ROOT = Path(__file__).resolve().parent.parent
 BUILD = ROOT / "video" / "assets" / "build"
 OUT = ROOT / "video" / "out"
 W, H = 1920, 1080
-ORDER = "O⓪A①②③④⑤⑥⑦⑧⑨"  # O＝冒頭の実写・A＝計器盤から本物の加湿器を動かす実写
+ORDER = "O⓪A①②③④⑤⑥⑦⑧⑨⑩"  # O＝冒頭の実写・A＝計器盤から本物の加湿器を動かす実写
 AIVIS = "http://127.0.0.1:10101"
 VOICE_ID = 1937616896  # にせ（低めで落ち着いた講義調・ACML 1.0＝商用可・クレジット任意）
 LEAD, GAP = 0.5, 0.45  # 場面の頭の間・行と行の間
-TAIL = {"⓪": 1.0, "⑨": 4.5}  # 場面の後ろの間（ほかは 0.8）
+TAIL = {"⓪": 1.0, "⑩": 4.5}  # 場面の後ろの間（ほかは 0.8）
 # 冒頭の実写の並び（手元だけ＝git に入らない）。無ければ札で代える。形：
 # {"parts": [{"clip": "norihiro_sample/IMG_0001.mov", "from": 0, "to": 30, "gain_db": 12},
 #            {"black": 1.0}, {"title": 2.5, "turn": true}]}
@@ -66,7 +66,7 @@ def read_script() -> dict[str, list[str]]:
     scenes: dict[str, list[str]] = {}
     cur = None
     for line in (ROOT / "video" / "script.md").read_text().splitlines():
-        m = re.match(r"## ([⓪①②③④⑤⑥⑦⑧⑨])", line)
+        m = re.match(r"## ([⓪①②③④⑤⑥⑦⑧⑨⑩])", line)
         if m:
             cur = m.group(1)
             scenes[cur] = []
@@ -391,6 +391,13 @@ def scene_pages(rec: dict):
         s["meter"].update(
             temp_c=22.1, rh_pct=68, vpd_kpa=0.851, read_at="2026-11-05T14:54:10+09:00", age_s=20
         )
+        # 11/5 14:50 の本物の天気（run/weather_20261105.jsonl のアメダスと 11 時発表の予報）
+        s["weather"] = {
+            "ok": True,
+            "line": "外（近くのアメダス 14:50）21.1℃・66%｜今日 11/5：晴れ 後 くもり 夜 雨・降水確率 最大 60%",
+            "reason": None,
+            "error": None,
+        }
         s["timer"] = {
             "on": True,
             "start": "15:04",
@@ -424,7 +431,7 @@ def scene_pages(rec: dict):
   <text id="rooml" fill="#e8efe9" font-size="26">部屋の空気の乾き</text>
 </svg>
 <div id="hand" class="chip amber" style="width:430px;font-size:26px">人が気づいて入れたのは、午後</div>
-<div id="burd" style="left:1400px;top:196px;font-size:30px;color:#ef7d6f;font-weight:700">乾きすぎ＝作物に負担</div>
+<div id="burd" style="font-size:76px;font-weight:700;color:#fff;white-space:nowrap;padding:6px 34px;background:rgba(150,40,30,.72);border:3px solid #ef7d6f;border-radius:18px;text-shadow:0 3px 14px rgba(0,0,0,.6)">乾きすぎ＝作物に負担</div>
 """
         js = """
 const R = D.room, O = D.out, H0 = 4, H1 = 24, WX = 1600, HY = 600;
@@ -449,7 +456,11 @@ function render(t) {
   const a = $("#outl"); a.setAttribute("x", X(6.3)); a.setAttribute("y", YO(93) - 16); a.style.opacity = E(P(t, c(0) + .8, .5));
   const b = $("#rooml"); b.setAttribute("x", X(4.2)); b.setAttribute("y", YV(.66) + 44); b.style.opacity = E(P(t, c(0) + .8, .5));
   $$("#hum rect").forEach((r, i) => { const on = R.filter(p => p[2])[i][0] <= h; r.setAttribute("opacity", on ? 1 : 0); });
-  fade("#burd", E(P(t, w(1, "負担") - .2, .6)), 12);
+  // 書ききった後に、帯からはみ出した赤い所の上へ大きく
+  const pk = R.reduce((a, p) => (p[1] > a[1] ? p : a), R[0]);
+  const bw = $("#burd").offsetWidth;
+  pos("#burd", 160 + X(pk[0]) - bw / 2, 240 + (YV(.8) + YV(pk[1])) / 2 - 50);
+  fade("#burd", BK(P(t, ce(1) + .1, .6)), 20, .85);
   const first = R.find(p => p[2]);
   const tn = w(2, "人のカン") - .3;
   pos("#hand", 160 + X(first[0]) - 215, 240 + YV(1.3) - 90);
@@ -481,6 +492,16 @@ function render(t) {
   style="left:0;top:0;width:1920px;height:1080px;object-fit:cover"></video>
 <div id="tag" class="chip" style="right:40px;top:40px;font-size:36px;font-weight:700;padding:14px 26px;white-space:nowrap">実写　計器盤（Artifact）→ 本物の加湿器</div>
 <div class="ring" id="r0"></div><div class="ring" id="r1"></div><div class="ring" id="r2"></div>
+<div class="box" id="b0"></div><div class="box" id="b1"></div><div class="box" id="b2"></div>
+<svg id="arr" width="1920" height="1080" style="left:0;top:0;overflow:visible">
+  <defs><marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+    <path d="M0,0 L10,5 L0,10 z" fill="#f0b45a"/></marker></defs>
+  <path id="ap" fill="none" stroke="#f0b45a" stroke-width="6" stroke-dasharray="14 10" marker-end="url(#ah)"/>
+</svg>
+<div id="t0" class="chip amber tel">押す：手動の「入れる」</div>
+<div id="t1" class="chip tel">少し遅れて、霧が出る ↓</div>
+<div id="t2" class="chip amber tel">押す：手動の「切る」</div>
+<div id="t3" class="chip amber tel">押す：オートの「入れる」</div>
 <div id="s0" class="chip act" style="font-size:52px;font-weight:700">手動操作：入れる</div>
 <div id="s1" class="chip act" style="font-size:52px;font-weight:700">本物の加湿器が動く</div>
 <div id="s2" class="chip act" style="font-size:52px;font-weight:700">手動操作：切る</div>
@@ -489,12 +510,15 @@ function render(t) {
 .ring {{ position:absolute; width:120px; height:120px; margin:-60px 0 0 -60px; border-radius:50%;
   border:7px solid #f0b45a; box-shadow:0 0 30px rgba(240,180,90,.8); opacity:0; }}
 .act {{ left:0; right:0; margin:0 auto; width:fit-content; top:880px; white-space:nowrap; padding:18px 40px; }}
+.tel {{ right:40px; top:136px; font-size:42px; font-weight:700; white-space:nowrap; padding:14px 28px; }}
+.box {{ position:absolute; border:6px solid #f0b45a; border-radius:14px; opacity:0;
+  box-shadow:0 0 0 9999px rgba(0,0,0,.28), 0 0 30px rgba(240,180,90,.9); }}
 </style>
 """
         js = f"""
 const FROM = {a.get("from", 0)}, B = {json.dumps(b)};
-// 押した所（1920×1080 の画面の上）：手動の入れる・手動の切る・オートの入れる
-const RING = [[B.on, 686, 142], [B.off, 764, 142], [B.auto, 472, 323]];
+// 押した所（1920×1080 の画面の上）：[押す時刻, 中心 x, 中心 y, 幅, 高さ, 次の時刻]
+const RING = [[B.on, 686, 144, 124, 70, B.mist], [B.off, 765, 144, 100, 70, B.auto], [B.auto, 474, 324, 118, 66, T + 1]];
 function win(t, a, z) {{ return E(P(t, a, .35)) * (1 - P(t, z - .35, .35)); }}
 async function render(t) {{
   fade("#tag", win(t, .2, T + 1), 0);
@@ -502,12 +526,31 @@ async function render(t) {{
   fade("#s1", win(t, B.mist + .2, B.off - .1), 0);
   fade("#s2", win(t, B.off, B.auto - .2), 0);
   fade("#s3", win(t, B.auto, T + 1), 0);
-  RING.forEach(([at, x, y], i) => {{
-    const r = $("#r" + i), k = P(t, at - .15, 1.3);
+  fade("#t0", win(t, B.on, B.mist - .1), 0);
+  fade("#t1", win(t, B.mist + .2, B.off - .1), 0);
+  fade("#t2", win(t, B.off, B.auto - .2), 0);
+  fade("#t3", win(t, B.auto, T + 1), 0);
+  let arrow = 0, ax = 0, ay = 0, tel = null;
+  RING.forEach(([at, x, y, bw, bh, nx], i) => {{
+    // 輪は 0.9 秒ごとに広がり直す（押した後 2.6 秒まで）
+    const r = $("#r" + i), since = t - at + .15;
+    const k = since > 0 && since < 2.7 ? (since % .9) / .9 : -1;
     r.style.left = x + "px"; r.style.top = y + "px";
-    r.style.opacity = k > 0 && k < 1 ? (1 - k) * 1.2 : 0;
-    r.style.transform = `scale(${{.5 + 1.1 * E(k)}})`;
+    r.style.opacity = k >= 0 ? (1 - k) : 0;
+    r.style.transform = `scale(${{.6 + 1.4 * E(k)}})`;
+    // 枠は次の操作まで残す（周りを少し暗く）
+    const b = $("#b" + i), on = win(t, at - .1, nx - .1);
+    b.style.left = (x - bw / 2) + "px"; b.style.top = (y - bh / 2) + "px";
+    b.style.width = bw + "px"; b.style.height = bh + "px";
+    b.style.opacity = on; b.style.transform = `scale(${{L(1.6, 1, BK(P(t, at - .1, .45)))}})`;
+    if (on > arrow) {{ arrow = on; ax = x + bw / 2 + 14; ay = y; tel = "#t" + (i === 0 ? 0 : i + 1); }}
   }});
+  if (tel) {{
+    const e = $(tel).getBoundingClientRect();
+    const sx = e.left - 12, sy = e.top + e.height / 2;
+    $("#ap").setAttribute("d", `M ${{sx}} ${{sy}} C ${{sx - 180}} ${{sy}}, ${{ax + 160}} ${{ay}}, ${{ax}} ${{ay}}`);
+  }}
+  $("#ap").style.opacity = arrow;
   $("#v-black").style.opacity = 1 - P(t, 0, .4) + P(t, T - .4, .4);
   await seek($("#vid"), FROM + t);
 }}"""
@@ -559,20 +602,20 @@ function render(t) {
         body = f"""
 <div id="cloud" class="card" style="left:140px;top:150px;width:900px;height:680px;border:3px dashed #f0b45a;background:rgba(240,180,90,.04)">
   <div style="font-size:34px;font-weight:700;color:#f0b45a">Claude Managed Agents</div>
-  <div class="mut" style="font-size:22px;margin-top:4px">考える所（Anthropic の側）・定時の起動で 3 時間ごとに起きる</div>
+  <div class="mut" style="font-size:22px;margin-top:4px">クラウド＝考える所（Anthropic の側）・3 時間ごとに起きる</div>
 </div>
 {ag(0, "Sonnet 5.5", "分析役", 290)}
 {ag(1, "Opus 5.5", "制御役", 400)}
 {ag(2, "Haiku 5.5", "専門家", 510)}
 <div id="mem" class="chip amber" style="left:200px;top:650px;width:600px;font-size:26px">記憶の置き場：経験（版が残る）・記録・知識</div>
 <div id="local" class="card" style="left:1240px;top:150px;width:540px;height:680px;border:3px solid #8fc09f">
-  <div style="font-size:34px;font-weight:700;color:#8fc09f">手元</div>
+  <div style="font-size:34px;font-weight:700;color:#8fc09f">ローカル</div>
   <div class="mut" style="font-size:22px;margin-top:4px">動かす所</div>
 </div>
 <div id="l0" class="chip" style="left:1300px;top:290px;width:420px;font-size:30px;font-weight:700">受け手</div>
 <div id="l1" class="chip red" style="left:1300px;top:420px;width:420px;font-size:30px;font-weight:700">守りの層</div>
 <div id="l2" class="chip" style="left:1300px;top:550px;width:420px;font-size:30px;font-weight:700">加湿器</div>
-<div id="key" class="mut" style="left:1300px;top:690px;width:440px;font-size:24px">鍵も機械も、手元から出ない</div>
+<div id="key" class="chip red" style="left:1280px;top:690px;width:460px;font-size:26px">機械の鍵は、ローカルだけ<br><span class="mut" style="font-size:20px">クラウドの AI は、計画を出すだけ</span></div>
 <div id="up" style="left:1060px;top:350px;width:160px;text-align:center;font-size:22px;color:#7fb3d4">← 記録<br><span style="font-size:18px" class="mut">温湿度・操作・天気</span></div>
 <div id="dn" style="left:1060px;top:470px;width:160px;text-align:center;font-size:22px;color:#f0b45a">計画 →<br><span style="font-size:18px" class="mut">submit_plan</span></div>
 """
@@ -581,10 +624,10 @@ function render(t) {
   fade("#cloud", E(P(t, w(0, "Managed") - .3, .6)), 20);
   for (let i = 0; i < 3; i++) fade("#a" + i, BK(P(t, w(0, "3 体") + i * .2, .5)), 20, .92);
   fade("#mem", E(P(t, w(0, "3 体") + .9, .5)), 10);
-  fade("#local", E(P(t, w(1, "手元") - .4, .6)), 20);
-  for (let i = 0; i < 3; i++) fade("#l" + i, E(P(t, w(1, "手元") - .1 + i * .18, .4)), 12);
+  fade("#local", E(P(t, w(1, "ローカル") - .4, .6)), 20);
+  for (let i = 0; i < 3; i++) fade("#l" + i, E(P(t, w(1, "ローカル") - .1 + i * .18, .4)), 12);
   fade("#up", E(P(t, w(1, "考える") , .5)), 0); fade("#dn", E(P(t, w(1, "動かす") - .2, .5)), 0);
-  fade("#key", E(P(t, w(1, "鍵"), .5)), 8);
+  fade("#key", BK(P(t, w(1, "鍵") - .2, .5)), 12, .92);
 }"""
         return plain(body, js, cues, total, {})
 
@@ -613,62 +656,63 @@ function render(t) {
 }"""
         return plain(body, js, cues, total, {})
 
-    # ③ 先読みして決める（11/5 15:04 の本物の答え） ---------------------------------
+    # ⑥ 画面で見る：先を読んで決める（11/5 15:04 の本物の答え） ----------------------------
     def p3(cues, total):
         X = 1180
         body = f"""
-<div id="k" class="kicker" style="left:{X}px;top:60px">目指すところ 1</div>
+<div id="k" class="kicker" style="left:{X}px;top:60px">画面で見る</div>
 <div id="h" class="head" style="left:{X}px;top:100px;font-size:50px">先を読んで決める</div>
 <div id="cap" class="mut" style="left:{X}px;top:186px;font-size:24px">11/5 15:04 の回（本物の答え）</div>
-<div id="c1" class="chip" style="width:680px">14:54 の空気の乾き <b class="num">0.851</b><span class="mut">（ちょうどいいのは 0.8 まで）</span></div>
+<div id="cw" class="chip" style="width:680px;border-left-color:#7fb3d4">外の天気：夜は雨の予報<span class="mut">（18 時の降水確率 60%）</span></div>
+<div id="ch" class="chip" style="width:680px">人の操作：今日 13:15〜14:15 の 60 分（手動）<br>乾き <b class="num">0.925 → 0.793</b><span class="mut">（効きが弱かった）</span></div>
 <div id="c2" class="chip" style="width:680px">経験：秋の傾向 <b class="num">26</b> 回・15 分で <b class="num">−0.238</b></div>
-<div id="barbox" style="left:{X}px;top:470px;width:680px;height:96px">
+<div id="barbox" style="left:{X}px;top:600px;width:680px;height:96px">
   <div id="bar" style="position:absolute;left:0;top:0;height:96px;width:680px;border-radius:12px;background:#2a3a30;border:2px solid #4a5c50"></div>
   <div id="barl" style="position:absolute;left:24px;top:22px;font-size:34px;font-weight:700;white-space:nowrap">定時の 60 分</div>
 </div>
-<div id="c3" class="chip" style="width:680px">夜は雨の予報<span class="mut">（18 時の降水確率 60%）</span> → 長くはしない</div>
 <div id="c4" class="chip amber" style="width:680px;font-size:26px">「外の天気がこの部屋にどれだけ効くかの行は経験に無いので、<span id="mk" class="mark">これは推測</span>」</div>
 """
         js = f"""
 const X = {X};
-let OT, OG, OE;
+const MAN = ".controls .mode:nth-of-type(1)", TIM = ".controls .mode:nth-of-type(2)", EXR = "#expTable tbody tr:nth-child(2)";
+let OW, OM, OE, OT;
 function setup() {{
-  OT = off(".controls .mode:nth-of-type(2)"); OG = off("#gauges"); OE = off(".exp");
+  OW = off("#weather"); OM = off(MAN); OE = off(".exp"); OT = off(TIM);
 }}
 function render(t) {{
-  const yT = 330 - OT.y, yG = 80 - OG.y, yE = 300 - OE.y;
-  const tv = w(1, "今の") - .3, ta = w(1, "これまで") - .4, td = w(1, "何分") - .3;
-  cam(70, track(t, [[0, yT], [tv, yG], [ta, yE], [td, yT]], .7));
+  const yW = 330 - OW.y, yM = 330 - OM.y, yE = 300 - OE.y, yT = 330 - OT.y;
+  const tw = c(0) + .1, th = w(1, "人の操作") - .3, te = w(1, "経験") - .4, td = c(2) - .3;
+  cam(70, track(t, [[0, yW], [th, yM], [te, yE], [td, yT]], .7));
   fade("#k", E(P(t, .1, .5))); fade("#h", E(P(t, .25, .6))); fade("#cap", E(P(t, .6, .6)));
-  hl(".controls .mode:nth-of-type(2)", t > .3 && t < tv);
-  hl("label[for=timerAi]", t > c(0) + .8 && t < tv);
-  hl(".gauge.vpd", t > tv + .6 && t < ta);
-  hl("#expTable tbody tr:nth-child(2)", t > ta + .6 && t < td);
-  hl("#timerWhy", t > td + .9);
-  fly("#c1", center(".gauge.vpd"), {{ x: X, y: 230 }}, P(t, tv + .6, .9));
-  fly("#c2", center("#expTable tbody tr:nth-child(2)"), {{ x: X, y: 350 }}, P(t, ta + .6, .9));
-  fade("#barbox", E(P(t, td - .2, .5)));
-  const sh = EIO(P(t, td + .8, .8));
+  hl("#weather", t > tw && t < th + .3);
+  hl(MAN, t > th + .6 && t < te + .3);
+  hl(EXR, t > te + .6 && t < td + .3);
+  hl(TIM, t > td + .6 && t < c(3) - .2);
+  hl("#timerWhy", t > c(3) - .2);
+  fly("#cw", center("#weather"), {{ x: X, y: 230 }}, P(t, tw + .5, .9));
+  fly("#ch", center(MAN), {{ x: X, y: 330 }}, P(t, th + .7, .9));
+  fly("#c2", center(EXR), {{ x: X, y: 470 }}, P(t, te + .7, .9));
+  fade("#barbox", E(P(t, td, .5)));
+  const sh = EIO(P(t, td + .9, .8));
   $("#bar").style.width = L(680, 680 * 20 / 60, sh) + "px";
   $("#bar").style.background = sh > 0 ? `rgba(240,180,90,${{L(.15, .9, sh)}})` : "#2a3a30";
   $("#barl").textContent = sh > .5 ? "AI の分：20 分" : "定時の 60 分";
   $("#barl").style.left = (sh > .5 ? 680 * 20 / 60 + 24 : 24) + "px";
-  fade("#c3", E(P(t, c(2) - .4, .6))); pos("#c3", X, 600);
-  fade("#c4", E(P(t, c(2) + .3, .6))); pos("#c4", X, 720);
-  $("#mk").style.setProperty("--m", (100 * E(P(t, w(2, "推測") - .1, .7))) + "%");
+  fade("#c4", E(P(t, c(3) - .3, .6))); pos("#c4", X, 730);
+  $("#mk").style.setProperty("--m", (100 * E(P(t, w(3, "推測") - .1, .7))) + "%");
 }}"""
         return dash(rec, body, js, cues, total, {}, patch=timer_patch)
 
     # ④ 経験が育つ：データが回る輪（具体例は出さない） ---------------------------------
     def p4(cues, total):
-        # 輪の上の箱：(id, 名, 小さな字, x, y, 側)  側＝cloud（Managed Agents）／local（手元）
+        # 輪の上の箱：(id, 名, 小さな字, x, y, 側)  側＝cloud（Managed Agents）／local（ローカル）
         nodes = [
             ("n0", "記録", "温湿度・操作・天気", 150, 250, "local"),
             ("n1", "分析役", "Sonnet 5.5・振り返る", 650, 250, "cloud"),
             ("n2", "経験", "記憶の置き場・版が残る", 1150, 250, "cloud"),
             ("n3", "制御役", "Opus 5.5・読むだけ", 1150, 600, "cloud"),
             ("n4", "守りの層", "決まった規則", 650, 600, "local"),
-            ("n5", "加湿器", "手元だけが動かす", 150, 600, "local"),
+            ("n5", "加湿器", "ローカルだけが動かす", 150, 600, "local"),
         ]
         box = "".join(
             f'<div id="{i}" class="card" style="left:{x}px;top:{y}px;width:360px;height:150px;padding:22px 28px;'
@@ -683,7 +727,7 @@ function render(t) {{
             for i, a, b, x, y, side in nodes
         )
         body = f"""
-<div id="k" class="kicker" style="left:150px;top:70px">目指すところ 2</div>
+<div id="k" class="kicker" style="left:150px;top:70px">設計の考え 1</div>
 <div id="h" class="head" style="left:150px;top:110px;font-size:50px">回すほど、経験がたまる</div>
 <svg id="ring" width="1920" height="1080" style="left:0;top:0;overflow:visible">
   <path id="loop" d="M 330 325 L 1330 325 L 1330 675 L 330 675 Z" fill="none" stroke="#34443a" stroke-width="6" stroke-linejoin="round"/>
@@ -729,6 +773,76 @@ function render(t) {
   const glow = Math.min(1, laps / 4);
   $("#n2").style.boxShadow = `0 0 ${80 * glow}px rgba(240,180,90,${.45 * glow})`;
   fade("#kw", BK(P(t, w(2, "動かせば") - .2, .7)), 20, .9);
+}"""
+        return plain(body, js, cues, total, {})
+
+    # ⑤ 設計の考え 2：外の天気と人の操作を取り込む（輪と同じ形の図） -------------------------
+    def pWH(cues, total):
+        nodes = [
+            ("w0", "外の天気", "近くのアメダス・予報", 150, 250, "local"),
+            ("w1", "制御役", "先を読んで、控える・長くする", 1290, 250, "cloud"),
+            ("h0", "人の操作", "手動・定時", 150, 600, "local"),
+            ("h1", "分析役", "1 回ずつ効き目を計算", 720, 600, "cloud"),
+            ("h2", "経験", "記憶の置き場・版が残る", 1290, 600, "cloud"),
+        ]
+        box = "".join(
+            f'<div id="{i}" class="card" style="left:{x}px;top:{y}px;width:{420 if i == "w1" else 360}px;height:150px;padding:22px 28px;'
+            f'border:3px solid {"#f0b45a" if side == "cloud" else "#8fc09f"}">'
+            f'<div style="font-size:40px;font-weight:700">{a}</div><div class="mut" style="font-size:22px;margin-top:6px">{b}</div>'
+            + (
+                '<div id="lv" style="position:absolute;left:0;bottom:0;height:8px;background:#f0b45a;border-radius:0 0 0 16px"></div>'
+                if i == "h2"
+                else ""
+            )
+            + "</div>"
+            for i, a, b, x, y, side in nodes
+        )
+        body = f"""
+<div id="k" class="kicker" style="left:150px;top:70px">設計の考え 2</div>
+<div id="h" class="head" style="left:150px;top:110px;font-size:50px">外の天気と、人の操作を取り込む</div>
+<svg id="paths" width="1920" height="1080" style="left:0;top:0;overflow:visible">
+  <path id="pw" d="M 510 325 L 1290 325" fill="none" stroke="#2c4250" stroke-width="6"/>
+  <path id="ph" d="M 510 675 L 1470 675 L 1470 400" fill="none" stroke="#34443a" stroke-width="6" stroke-linejoin="round"/>
+  <g id="dw"></g><g id="dh"></g>
+</svg>
+{box}
+<div id="lw" style="left:600px;top:270px;width:600px;text-align:center;font-size:24px;color:#7fb3d4">今の外・今日と明日の予報 →</div>
+<div id="lh" style="left:520px;top:700px;width:200px;text-align:center;font-size:20px;color:#8fc09f">誰が・何分・<br>前後の乾き</div>
+<div id="lx" style="left:1090px;top:620px;font-size:22px;color:#6cc28b">書く →</div>
+<div id="lr" style="left:1490px;top:470px;font-size:22px;color:#f0b45a">読む ↑</div>
+<div id="kw" class="head" style="left:0;top:800px;width:1920px;text-align:center;font-size:60px;color:#f0b45a">天気と人のカンが、AI の判断になる</div>
+"""
+        js = """
+let LW = 0, LH = 0;
+function setup() {
+  LW = $("#pw").getTotalLength(); LH = $("#ph").getTotalLength();
+  $("#dw").innerHTML = Array.from({ length: 7 }, () => '<circle r="9" fill="#7fb3d4"/>').join("");
+  $("#dh").innerHTML = Array.from({ length: 10 }, () => '<circle r="9" fill="#8fc09f"/>').join("");
+}
+function flow(sel, path, len, dist, gap) {
+  $$(sel + " circle").forEach((d, i) => {
+    const x = dist - i * gap, on = x > 0 ? 1 : 0;
+    const pt = $(path).getPointAtLength(((x % len) + len) % len);
+    d.setAttribute("cx", pt.x); d.setAttribute("cy", pt.y); d.setAttribute("opacity", on * .95);
+  });
+}
+function render(t) {
+  fade("#k", E(P(t, .1, .5))); fade("#h", E(P(t, .25, .6)));
+  const tw = c(0), th = c(1);
+  fade("#w0", BK(P(t, tw, .5)), 16, .92); fade("#w1", BK(P(t, w(0, "制御役") - .2, .5)), 16, .92);
+  fade("#lw", E(P(t, tw + .6, .4)), 0); $("#pw").style.opacity = E(P(t, tw + .3, .6));
+  fade("#h0", BK(P(t, th, .5)), 16, .92); fade("#h1", BK(P(t, w(1, "分析役") - .2, .5)), 16, .92);
+  fade("#h2", BK(P(t, w(1, "経験") - .2, .5)), 16, .92);
+  fade("#lh", E(P(t, th + .5, .4)), 0); fade("#lx", E(P(t, w(1, "書き足す") - .2, .4)), 0);
+  fade("#lr", E(P(t, c(2) - .3, .4)), 0); $("#ph").style.opacity = E(P(t, th + .3, .6));
+  const fast = t > c(2) - .3 ? (t - (c(2) - .3)) * 500 * EIO(P(t, c(2) - .3, 1.2)) : 0;
+  flow("#dw", "#pw", LW, Math.max(0, t - tw - .6) * 240 + fast, 110);
+  const dh = Math.max(0, t - th - .6) * 240 + fast;
+  flow("#dh", "#ph", LH, dh, 120);
+  $("#lv").style.width = Math.min(360, 30 + dh / LH * 90) + "px";
+  const glow = cl(dh / LH / 3);
+  $("#h2").style.boxShadow = `0 0 ${70 * glow}px rgba(240,180,90,${.4 * glow})`;
+  fade("#kw", BK(P(t, c(2) - .2, .7)), 20, .9);
 }"""
         return plain(body, js, cues, total, {})
 
@@ -923,12 +1037,13 @@ async function render(t) {{
         "①": pUI,
         "②": p1,
         "③": p2,
-        "④": p3,
-        "⑤": p4,
-        "⑥": p5,
-        "⑦": p6,
-        "⑧": p7,
-        "⑨": p8,
+        "④": p4,
+        "⑤": pWH,
+        "⑥": p3,
+        "⑦": p5,
+        "⑧": p6,
+        "⑨": p7,
+        "⑩": p8,
     }
 
 
