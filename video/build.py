@@ -29,7 +29,7 @@ ROOT = Path(__file__).resolve().parent.parent
 BUILD = ROOT / "video" / "assets" / "build"
 OUT = ROOT / "video" / "out"
 W, H = 1920, 1080
-ORDER = "O⓪①②③④⑤⑥⑦⑧"  # O＝冒頭の実写
+ORDER = "O⓪A①②③④⑤⑥⑦⑧"  # O＝冒頭の実写・A＝計器盤から本物の加湿器を動かす実写
 AIVIS = "http://127.0.0.1:10101"
 VOICE_ID = 1937616896  # にせ（低めで落ち着いた講義調・ACML 1.0＝商用可・クレジット任意）
 LEAD, GAP = 0.5, 0.45  # 場面の頭の間・行と行の間
@@ -38,6 +38,8 @@ TAIL = {"⓪": 1.0, "⑧": 4.5}  # 場面の後ろの間（ほかは 0.8）
 # {"parts": [{"clip": "norihiro_sample/IMG_0001.mov", "from": 0, "to": 30, "gain_db": 12},
 #            {"black": 1.0}, {"title": 2.5, "turn": true}]}
 # turn＝BGM がここで長調に移る（無ければ ① の頭）
+# "artifact"：{"clip": ..., "from": 0, "to": 18, "gain_db": 12, "beats": {"on": 0.3, "mist": 4.6, "off": 9.4, "auto": 14.3}}
+# beats＝実写の中の時刻（入れる・霧が出る・切る・オートを入れる）＝札を出す時刻
 OPENING = ROOT / "video" / "assets" / "opening.json"
 
 # 読み上げだけ直す語（字幕はそのまま）
@@ -466,6 +468,33 @@ function render(t) {
     def p_black(cues, total):
         return plain("", "function render(t){}", cues, total, {})
 
+    # A 計器盤（Artifact）から本物の加湿器を動かす実写 ------------------------------
+    def pA(cues, total):
+        a = rec.get("artifact") or {}
+        b = a.get("beats", {})
+        body = f"""
+<video id="vid" src="{a.get("uri", "")}" muted preload="auto" playsinline
+  style="left:0;top:0;width:1920px;height:1080px;object-fit:cover"></video>
+<div id="tag" class="chip" style="left:60px;top:50px;font-size:24px;padding:10px 20px">実写・等速　計器盤（Artifact）→ 本物の加湿器</div>
+<div id="s0" class="chip" style="left:60px;top:900px;font-size:34px;font-weight:700">手で「入れる」</div>
+<div id="s1" class="chip" style="left:1180px;top:900px;font-size:34px;font-weight:700">守りの層を通って、加湿器が動く</div>
+<div id="s2" class="chip" style="left:60px;top:900px;font-size:34px;font-weight:700">「切る」</div>
+<div id="s3" class="chip amber" style="left:60px;top:900px;font-size:34px;font-weight:700">「オート」を入れる　→　あとは AI が 3 時間ごとに決める</div>
+"""
+        js = f"""
+const FROM = {a.get("from", 0)}, B = {json.dumps(b)};
+function win(t, a, z) {{ return E(P(t, a, .35)) * (1 - P(t, z - .35, .35)); }}
+async function render(t) {{
+  fade("#tag", win(t, .2, T + 1), 0);
+  fade("#s0", win(t, B.on, B.mist - .2), 10);
+  fade("#s1", win(t, B.mist + .3, B.off - .1), 10);
+  fade("#s2", win(t, B.off, B.auto - .2), 10);
+  fade("#s3", win(t, B.auto, T + 1), 10);
+  $("#v-black").style.opacity = 1 - P(t, 0, .4) + P(t, T - .4, .4);
+  await seek($("#vid"), FROM + t);
+}}"""
+        return plain(body, js, cues, total, {})
+
     # ① 種明かし：Managed Agents（雲）と手元 ---------------------------------------
     def p1(cues, total):
         def ag(i, model, role, y):
@@ -493,7 +522,6 @@ function render(t) {
 <div id="key" class="mut" style="left:1300px;top:690px;width:440px;font-size:24px">鍵も機械も、手元から出ない</div>
 <div id="up" style="left:1060px;top:350px;width:160px;text-align:center;font-size:22px;color:#7fb3d4">← 記録<br><span style="font-size:18px" class="mut">温湿度・操作・天気</span></div>
 <div id="dn" style="left:1060px;top:470px;width:160px;text-align:center;font-size:22px;color:#f0b45a">計画 →<br><span style="font-size:18px" class="mut">submit_plan</span></div>
-<div id="note" class="mut" style="left:140px;top:860px;font-size:20px">試し：本番は Artifact で加湿器が動く実写を、この前に入れる</div>
 """
         js = """
 function render(t) {
@@ -504,7 +532,6 @@ function render(t) {
   for (let i = 0; i < 3; i++) fade("#l" + i, E(P(t, w(1, "手元") - .1 + i * .18, .4)), 12);
   fade("#up", E(P(t, w(1, "考える") , .5)), 0); fade("#dn", E(P(t, w(1, "動かす") - .2, .5)), 0);
   fade("#key", E(P(t, w(1, "鍵"), .5)), 8);
-  fade("#note", E(P(t, .4, .5)));
 }"""
         return plain(body, js, cues, total, {})
 
@@ -842,6 +869,7 @@ async function render(t) {{
         "O": p_open,
         "title": p_title,
         "black": p_black,
+        "A": pA,
         "①": p1,
         "②": p2,
         "③": p3,
@@ -883,18 +911,22 @@ def sdr(src: Path) -> Path:
     return out
 
 
-def ending_clip() -> dict | None:
-    """締めの実写（opening.json の "ending"）を、画面の中で送れる mp4（音なし）にする。"""
+def page_clip(name: str) -> dict | None:
+    """opening.json の name（"ending"・"artifact"）の実写を、画面の中で送れる mp4（音なし）にする。"""
     if not OPENING.exists():
         return None
-    e = json.loads(OPENING.read_text()).get("ending")
+    e = json.loads(OPENING.read_text()).get(name)
     if not e:
         return None
-    src = sdr(ROOT / "video" / "assets" / e["clip"])
+    e["src"] = ROOT / "video" / "assets" / e["clip"]
+    src = sdr(e["src"])
     mp4 = src.with_suffix(".mp4")
     if not mp4.exists() or mp4.stat().st_mtime < src.stat().st_mtime:
         ff("-i", str(src), "-an", "-c:v", "copy", "-movflags", "+faststart", str(mp4))
-    return {"uri": mp4.as_uri(), "from": e["from"]}
+    e["uri"] = mp4.as_uri()
+    if "to" in e:
+        e["len"] = e["to"] - e["from"]
+    return e
 
 
 def opening_parts(fps: int) -> list[dict] | None:
@@ -912,7 +944,7 @@ def opening_parts(fps: int) -> list[dict] | None:
     return parts
 
 
-def timeline(scenes, keys, args, use_aivis, opening):
+def timeline(scenes, keys, args, use_aivis, opening, artifact=None):
     """場面ごとに 字幕の時刻（場面の頭から）と長さ を決め、声のファイルの置き場所（動画の頭から）を返す。"""
     plan, voices, t0 = [], [], 0.0
     for key in keys:
@@ -925,6 +957,12 @@ def timeline(scenes, keys, args, use_aivis, opening):
             else:
                 plan.append((key, [], args.opening, t0))
                 t0 += args.opening
+            continue
+        if key == "A":  # 言葉なしの実写（札だけ）
+            d = round(artifact["len"] * args.fps) / args.fps
+            artifact["at"] = t0
+            plan.append((key, [], d, t0))
+            t0 += d
             continue
         cues, t = [], LEAD
         for text in scenes[key]:
@@ -1039,11 +1077,14 @@ def main() -> None:
     print("声：", "AivisSpeech" if use_aivis else "say（AivisSpeech が動いていない）")
     scenes = read_script()
     rec = load_records()
-    rec["ending"] = ending_clip()
+    rec["ending"] = page_clip("ending")
+    rec["artifact"] = page_clip("artifact")
     pages = scene_pages(rec)
     keys = [k for k in ORDER if not args.only or k in args.only]
     opening = opening_parts(args.fps) if "O" in keys else None
-    plan, voices, total = timeline(scenes, keys, args, use_aivis, opening)
+    if not rec["artifact"]:
+        keys = [k for k in keys if k != "A"]
+    plan, voices, total = timeline(scenes, keys, args, use_aivis, opening, rec["artifact"])
 
     from playwright.sync_api import sync_playwright
 
@@ -1141,7 +1182,7 @@ def main() -> None:
     bgm = None
     if not args.no_bgm:
         bgm = BUILD / "bgm.wav"
-        marks = [t0 for k, _, _, t0 in plan if k != "O"]
+        marks = [t0 for k, _, _, t0 in plan if k != "O"]  # A の頭（①の前）で長調に移る
         turn = [p["at"] for p in (opening or []) if p.get("turn")]
         if turn and len(marks) > 1:
             marks[1] = turn[0]
@@ -1151,11 +1192,13 @@ def main() -> None:
             check=True,
         )
     clips = [p for p in (opening or []) if "clip" in p]
+    if "A" in keys:
+        clips.append(rec["artifact"])
     narration(voices, total, audio, bgm, args.bgm_db, clips)
     out = OUT / ("part.mp4" if args.only else "draft.mp4")
     ff("-i", str(video), "-i", str(audio), "-c:v", "copy", "-c:a", "copy", "-shortest", str(out))
     print("\n場面ごとの秒：", "・".join(f"{k} {d:.1f}" for k, _, d, _ in plan))
-    body = sum(d for k, _, d, _ in plan if k != "O")
+    body = sum(d for k, _, d, _ in plan if k != "O")  # A を含む
     op = sum(p["len"] for p in opening) if opening else 35.0
     print(f"冒頭の外 {body:.1f} 秒＋冒頭 {op:.1f} 秒＝{body + op:.1f} 秒（3 分＝180 秒）")
     print(f"出来上がり：{out}")
