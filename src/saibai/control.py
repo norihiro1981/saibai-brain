@@ -55,14 +55,28 @@ class DummyPlug:
 
 
 class SwitchBotPlug:
-    """本物のプラグ（SwitchBot プラグミニ）。命令の 3 秒後に `power` を読み直して確かめる（11/3）。"""
+    """本物のプラグ（SwitchBot プラグミニ）。命令の後に `power` を settle_s ごとに reads 回読み直して確かめ、
+    変わらなければ同じ命令をもう一度送る（tries 回まで）。
+
+    11/3 は 3 秒後に必ず変わっていたが、11/6 は「命令は statusCode 100 で通るのに 3 秒後も前のまま」が続き、
+    1 回で諦めると画面が「入らなかった」と言い、人が切を押して運転が途中で止まった。
+    """
 
     kind = "switchbot"
 
-    def __init__(self, client: SwitchBotClient, device_id: str, settle_s: float = 3.0):
+    def __init__(
+        self,
+        client: SwitchBotClient,
+        device_id: str,
+        settle_s: float = 3.0,
+        reads: int = 3,
+        tries: int = 2,
+    ):
         self.client = client
         self.device_id = device_id
         self.settle_s = settle_s
+        self.reads = reads
+        self.tries = tries
         self.last_error: str | None = None
 
     def read(self) -> bool | None:
@@ -75,24 +89,32 @@ class SwitchBotPlug:
 
     def set(self, on: bool) -> bool:
         cmd = "turnOn" if on else "turnOff"
-        try:
-            r = self.client.command(self.device_id, cmd)
-        except (
-            Exception
-        ) as e:  # 通信の失敗（時間切れ等）。鍵はヘッダにしか無いので例外の字には出ない
-            self.last_error = f"{cmd} が届かない：{type(e).__name__}: {e}"
-            return False
-        if r.status_code != 100:
-            self.last_error = f"{cmd} を断られた：HTTP {r.http}・statusCode {r.status_code}・{r.message or '理由なし'}"
-            return False
-        time.sleep(self.settle_s)
-        got = self.read()
-        if got != on:
-            seen = "読めない" if got is None else ("入" if got else "切")
-            self.last_error = f"{cmd} は通ったが {self.settle_s:g} 秒後の状態が{seen}"
-            return False
-        self.last_error = None
-        return True
+        got: bool | None = None
+        waited = 0.0
+        for _ in range(self.tries):
+            try:
+                r = self.client.command(self.device_id, cmd)
+            except (
+                Exception
+            ) as e:  # 通信の失敗（時間切れ等）。鍵はヘッダにしか無いので例外の字には出ない
+                self.last_error = f"{cmd} が届かない：{type(e).__name__}: {e}"
+                return False
+            if r.status_code != 100:
+                self.last_error = f"{cmd} を断られた：HTTP {r.http}・statusCode {r.status_code}・{r.message or '理由なし'}"
+                return False
+            for _ in range(self.reads):
+                time.sleep(self.settle_s)
+                waited += self.settle_s
+                got = self.read()
+                if got == on:
+                    self.last_error = None
+                    return True
+        seen = "読めない" if got is None else ("入" if got else "切")
+        self.last_error = (
+            f"{cmd} は {self.tries} 回とも通ったが {waited:g} 秒たっても状態が{seen}"
+            "（命令がプラグ本体に届いていない疑い＝プラグの Wi-Fi か電源を見る）"
+        )
+        return False
 
 
 class Schedule(Protocol):
@@ -235,6 +257,7 @@ class Controller:
         self._spawn = lambda f, *a: threading.Thread(target=f, args=a, daemon=True).start()
         self._quiet = False
         self._lock = threading.RLock()
+        self._last_status: dict | None = None
 
     def _log(self, kind: str, **rec) -> dict:
         now = self.now()
@@ -503,16 +526,30 @@ class Controller:
                 actual = self.plug.read()
                 self.plug_actual, self.plug_checked_at = actual, self.now()
                 if actual is not None and actual != d.on:
-                    why = "計画に無い入を切る" if actual else "入のはずが切だった"
-                    self._log("plug_mismatch", actual=actual, want=d.on)
+                    # 前の命令が効かないまま（plug_error あり）なら、外から変わったのではなく
+                    # 受け手の命令がまだ届いていない＝「受け手が入れ直す／切り直す」として残す
+                    retry = self.plug_error is not None
+                    if retry:
+                        why = (
+                            "入の命令が効いていないので入れ直す"
+                            if d.on
+                            else "切の命令が効いていないので切り直す"
+                        )
+                    else:
+                        why = "計画に無い入を切る" if actual else "入のはずが切だった"
+                    self._log("plug_mismatch", actual=actual, want=d.on, retry=retry)
                     after = self._apply(d.on, why)
                     self._action(
-                        "外から",
-                        "入" if actual else "切",
+                        "受け手" if retry else "外から",
+                        ("入れ直す" if d.on else "切り直す")
+                        if retry
+                        else ("入" if actual else "切"),
                         reasons=[why]
                         + ([self.plug_error] if after != d.on and self.plug_error else []),
                         plug_after=after,
-                        note=self._gap_note() or "毎分の点検で記録に無い変化を見つけた",
+                        note=None
+                        if retry
+                        else (self._gap_note() or "毎分の点検で記録に無い変化を見つけた"),
                     )
 
     def weather_summary(self) -> dict | None:
@@ -573,7 +610,10 @@ class Controller:
                     plug_failed
                 ):  # 守りの層は入にしたが、プラグが入らなかった（毎分の点検で入れ直す）
                     why = self.plug_error or "プラグの状態が読めない"
-                    text = f"守りの層は受け付けたが、プラグが入らなかった：{why}（毎分入れ直す）"
+                    text = (
+                        f"守りの層は受け付けたが、プラグが入らなかった：{why}"
+                        f"（運転の {minutes} 分の間は毎分入れ直す＝切を押さなくてよい）"
+                    )
                     reasons = [why]
                 ok = v.ok and self.guard.on and not plug_failed
                 self._action(
@@ -643,23 +683,33 @@ class Controller:
             return {"ok": False, "reason": type(e).__name__, "line": ""}
 
     def status(self) -> dict:
-        with self._lock:
-            now = self.now()
-            return {
-                "plug": {
-                    "kind": self.plug.kind,
-                    "want_on": self.guard.on,
-                    "actual_on": self.plug_actual,
-                    "error": self.plug_error,
-                    "checked_at": self.plug_checked_at.isoformat()
-                    if self.plug_checked_at
-                    else None,
-                    "off_reasons": self.last_decision_reasons,
-                },
-                "guard": self.guard.snapshot(now),
-                "last_plan": self.last_plan_verdict,
-                "schedule": self.schedule.get(),
-                "auto": self.auto.status() if self.auto else None,
-                "weather": self._weather_status(),
-                "timer": self.timer | {"text": self._timer_text()},
-            }
+        """今の状態。プラグへの命令の最中（読み直しで十数秒かかる）は錠を待たず、前の答えに busy を付けて返す
+        ＝画面と MCP の get_status が時間切れで「受け手が止まった」に見えないように。"""
+        if not self._lock.acquire(timeout=1.0):
+            if self._last_status is not None:
+                return self._last_status | {"busy": "プラグへの命令を確かめている最中（前の答え）"}
+            self._lock.acquire()
+        try:
+            self._last_status = self._status()
+            return self._last_status
+        finally:
+            self._lock.release()
+
+    def _status(self) -> dict:
+        now = self.now()
+        return {
+            "plug": {
+                "kind": self.plug.kind,
+                "want_on": self.guard.on,
+                "actual_on": self.plug_actual,
+                "error": self.plug_error,
+                "checked_at": self.plug_checked_at.isoformat() if self.plug_checked_at else None,
+                "off_reasons": self.last_decision_reasons,
+            },
+            "guard": self.guard.snapshot(now),
+            "last_plan": self.last_plan_verdict,
+            "schedule": self.schedule.get(),
+            "auto": self.auto.status() if self.auto else None,
+            "weather": self._weather_status(),
+            "timer": self.timer | {"text": self._timer_text()},
+        }

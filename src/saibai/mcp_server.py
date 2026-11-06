@@ -32,7 +32,7 @@ def receiver_url() -> str:
 )
 def get_status() -> dict:
     try:
-        r = httpx.get(receiver_url() + "/status", timeout=3.0)
+        r = httpx.get(receiver_url() + "/status", timeout=10.0)
         r.raise_for_status()
         return r.json()
     except httpx.HTTPError as e:
@@ -41,7 +41,7 @@ def get_status() -> dict:
 
 def _post(path: str, body: dict) -> dict:
     try:
-        r = httpx.post(receiver_url() + path, json=body, timeout=15.0)
+        r = httpx.post(receiver_url() + path, json=body, timeout=45.0)
         r.raise_for_status()
         return r.json()
     except httpx.HTTPError as e:

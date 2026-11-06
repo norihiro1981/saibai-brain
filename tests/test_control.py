@@ -381,6 +381,82 @@ def test_switchbot_plug_keeps_reason():
     p = SwitchBotPlug(_Client(TimeoutError("遅い")), "x", settle_s=0)
     assert p.set(True) is False and "TimeoutError" in p.last_error
     p = SwitchBotPlug(_Client(_Reply(200, 100, "success"), power="off"), "x", settle_s=0)
-    assert p.set(True) is False and "秒後の状態が切" in p.last_error
+    assert p.set(True) is False and "秒たっても状態が切" in p.last_error
     p = SwitchBotPlug(_Client(_Reply(200, 100, "success"), power="on"), "x", settle_s=0)
     assert p.set(True) is True and p.last_error is None
+
+
+class _LateClient(_Client):
+    """命令は通るが、状態が変わるのが遅い（11/6 の工場）。on_after 回目の読みで入になる。
+    resend_needed＝1 回目の命令は本体に届かず、2 回目の命令の後だけ変わる。"""
+
+    def __init__(self, on_after, resend_needed=False):
+        super().__init__(_Reply(200, 100, "success"))
+        self.on_after, self.resend_needed = on_after, resend_needed
+        self.reads = self.commands = 0
+
+    def command(self, device_id, command):
+        self.commands += 1
+        if self.resend_needed and self.commands == 2:
+            self.reads = 0  # 2 回目の命令から数え直す
+        return self.cmd_reply
+
+    def status(self, device_id):
+        self.reads += 1
+        ready = self.reads >= self.on_after and (not self.resend_needed or self.commands >= 2)
+        return _Reply(200, 100, "success", {"power": "on" if ready else "off"})
+
+
+def test_switchbot_plug_waits_and_resends():
+    """3 秒で変わらなくても諦めない：読み直しを重ね、それでも変わらなければ命令をもう一度送る（11/6）。"""
+    from saibai.control import SwitchBotPlug
+
+    c = _LateClient(on_after=3)
+    p = SwitchBotPlug(c, "x", settle_s=0)
+    assert p.set(True) is True and c.commands == 1 and p.last_error is None
+    c = _LateClient(on_after=1, resend_needed=True)
+    p = SwitchBotPlug(c, "x", settle_s=0)
+    assert p.set(True) is True and c.commands == 2
+    c = _LateClient(on_after=99)
+    p = SwitchBotPlug(c, "x", settle_s=0)
+    assert p.set(True) is False and c.commands == 2 and "2 回とも通ったが" in p.last_error
+
+
+def test_failed_on_is_retried_as_receiver_not_outside(tmp_path):
+    """入の命令が効かないまま毎分の点検で入れ直す時、「外から切った」とは書かない（11/6）。"""
+    ctrl, plug, clock = make(tmp_path)
+    plug.fail_with = "turnOn は 2 回とも通ったが 18 秒たっても状態が切"
+    r = ctrl.set_humidifier(True, 30)
+    assert not r["ok"] and "切を押さなくてよい" in r["text"]
+    clock.step(ctrl, 1)
+    lines = [
+        json.loads(x)
+        for x in (tmp_path / f"control_{clock.t:%Y%m%d}.jsonl").read_text().splitlines()
+    ]
+    last = [x for x in lines if x["kind"] == "action"][-1]
+    assert last["who"] == "受け手" and last["what"] == "入れ直す"
+    assert ctrl.guard.on is True  # 運転は途中で止めない
+    plug.fail_with = None
+    clock.step(ctrl, 1)
+    assert plug.on is True
+
+
+def test_status_does_not_wait_for_slow_plug(tmp_path):
+    """プラグへの命令の最中（錠を持っている間）でも、状態は前の答えをすぐ返す。"""
+    ctrl, plug, clock = make(tmp_path)
+    ctrl.status()
+    held, release = threading.Event(), threading.Event()
+
+    def hold():
+        with ctrl._lock:
+            held.set()
+            release.wait(5)
+
+    t = threading.Thread(target=hold)
+    t.start()
+    held.wait(5)
+    st = ctrl.status()
+    release.set()
+    t.join()
+    assert "busy" in st and "plug" in st
+    assert "busy" not in ctrl.status()
